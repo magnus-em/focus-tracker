@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+LockIn.app/
+FocusTimer.app/
+*.xcodeproj/
+xcuserdata/
+.DS_Store
