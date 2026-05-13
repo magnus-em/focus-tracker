@@ -20,8 +20,10 @@ class TimerManager: ObservableObject {
     @Published var isAwaitingFlowDecision = false
     @Published var flowDecisionCountdown = 10
 
-    // Commitment — set when session was started via the commitment modal
-    @Published var isCommitted = false
+    // Pause auto-finalize state
+    @Published var pauseStartedAt: Date? = nil
+    @Published var pauseRemainingSeconds: Double = 0
+    private var pauseStaleSubscription: AnyCancellable?
 
     enum Phase: String {
         case work = "Focus"
@@ -36,6 +38,8 @@ class TimerManager: ObservableObject {
     private var lastResumeTime: Date?
     private var settingsSubscriptions = Set<AnyCancellable>()
     private let completionPanel = CompletionPanel()
+    private var tickCount = 0
+    private static let checkpointKey = "timerCheckpoint"
 
     var sessionStore: SessionStore?
     var settings: AppSettings? {
@@ -85,19 +89,16 @@ class TimerManager: ObservableObject {
     // MARK: - Controls
 
     func start() {
+        cancelPauseGrace()
         if sessionStartTime == nil { sessionStartTime = Date() }
         lastResumeTime = Date()
         isRunning = true
+        tickCount = 0
         timer = Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in self?.tick() }
         updateBlocking()
-    }
-
-    /// Start a session that was confirmed via the commitment modal.
-    func startCommitted() {
-        isCommitted = true
-        start()
+        saveCheckpoint()
     }
 
     func pause() {
@@ -108,6 +109,81 @@ class TimerManager: ObservableObject {
         isRunning = false
         timer?.cancel()
         timer = nil
+        saveCheckpoint()
+        // Only arm auto-finalize for work phases that have meaningful elapsed time
+        if currentPhase == .work && sessionStartTime != nil {
+            startPauseGrace()
+        }
+    }
+
+    // MARK: - Pause auto-finalize
+
+    private var pauseGraceSeconds: Double {
+        Double(max(1, settings?.pauseGraceMinutes ?? 10)) * 60
+    }
+
+    private func startPauseGrace() {
+        pauseStartedAt = Date()
+        pauseRemainingSeconds = pauseGraceSeconds
+        pauseStaleSubscription = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.tickPauseGrace() }
+    }
+
+    private func tickPauseGrace() {
+        guard let started = pauseStartedAt else { return }
+        let elapsed = Date().timeIntervalSince(started)
+        pauseRemainingSeconds = max(0, pauseGraceSeconds - elapsed)
+        if pauseRemainingSeconds <= 0 {
+            finalizeStalePause()
+        }
+    }
+
+    private func cancelPauseGrace() {
+        pauseStaleSubscription?.cancel()
+        pauseStaleSubscription = nil
+        pauseStartedAt = nil
+        pauseRemainingSeconds = 0
+    }
+
+    /// Save the partial work session and return to idle. Called when the
+    /// pause grace runs out — bathroom break safe, leaving the desk auto-ends.
+    private func finalizeStalePause() {
+        cancelPauseGrace()
+        let elapsed = elapsedBeforePause
+        if elapsed >= 60, currentPhase == .work, let start = sessionStartTime {
+            sessionStore?.addSession(WorkSession(
+                startTime: start,
+                durationMinutes: elapsed / 60.0,
+                type: .work,
+                label: currentLabel.isEmpty ? nil : currentLabel
+            ))
+        }
+        currentLabel = ""
+        elapsedBeforePause = 0
+        lastResumeTime = nil
+        sessionStartTime = nil
+        clearCheckpoint()
+        setTimeForCurrentPhase()
+        unblockIfNeeded()
+        sendStaleEndedNotification()
+    }
+
+    private func sendStaleEndedNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Focus"
+        content.body = "Paused too long — session ended and saved."
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        )
+    }
+
+    /// Convenience for the global hotkey — toggle between running and paused
+    /// without affecting committed-sessions state. If timer is idle, no-op.
+    func toggleRunPause() {
+        if isRunning { pause() }
+        else if isActive { start() }
     }
 
     func reset() {
@@ -117,6 +193,8 @@ class TimerManager: ObservableObject {
             unblockIfNeeded()
             return
         }
+
+        cancelPauseGrace()
 
         var elapsed = elapsedBeforePause
         if let resumeTime = lastResumeTime { elapsed += Date().timeIntervalSince(resumeTime) }
@@ -135,10 +213,10 @@ class TimerManager: ObservableObject {
         }
 
         currentLabel = ""
-        isCommitted = false
         elapsedBeforePause = 0
         lastResumeTime = nil
         sessionStartTime = nil
+        clearCheckpoint()
         setTimeForCurrentPhase()
         unblockIfNeeded()
     }
@@ -148,12 +226,31 @@ class TimerManager: ObservableObject {
             takeBreak()
             return
         }
+
+        cancelPauseGrace()
+
+        // Capture partial elapsed time so a skipped work session still counts.
+        var elapsed = elapsedBeforePause
+        if let resumeTime = lastResumeTime { elapsed += Date().timeIntervalSince(resumeTime) }
+
         timer?.cancel()
         timer = nil
         isRunning = false
+
+        if elapsed >= 60, currentPhase == .work, let start = sessionStartTime {
+            sessionStore?.addSession(WorkSession(
+                startTime: start,
+                durationMinutes: elapsed / 60.0,
+                type: .work,
+                label: currentLabel.isEmpty ? nil : currentLabel
+            ))
+        }
+
+        currentLabel = ""
         elapsedBeforePause = 0
         lastResumeTime = nil
         sessionStartTime = nil
+        clearCheckpoint()
         advancePhase()
         updateBlocking()
     }
@@ -177,7 +274,6 @@ class TimerManager: ObservableObject {
         cancelFlowDecision()
         workSessionsCompleted += 1
         currentLabel = ""
-        isCommitted = false
         setTimeForCurrentPhase()
         start()
     }
@@ -214,7 +310,9 @@ class TimerManager: ObservableObject {
         guard let resumeTime = lastResumeTime else { return }
         let elapsed = elapsedBeforePause + Date().timeIntervalSince(resumeTime)
         timeRemaining = max(0, totalTime - elapsed)
-        if timeRemaining <= 0 { completePhase() }
+        if timeRemaining <= 0 { completePhase(); return }
+        tickCount += 1
+        if tickCount % 60 == 0 { saveCheckpoint() } // every 30 seconds
     }
 
     private func completePhase() {
@@ -239,13 +337,13 @@ class TimerManager: ObservableObject {
         elapsedBeforePause = 0
         lastResumeTime = nil
         sessionStartTime = nil
+        clearCheckpoint()
 
         sendNotification()
         if settings?.soundEnabled ?? true { NSSound(named: "Glass")?.play() }
 
         if currentPhase == .work {
             lastCompletedLabel = currentLabel.isEmpty ? nil : currentLabel
-            isCommitted = false
             isAwaitingFlowDecision = true
             startFlowCountdown()
             completionPanel.show(timer: self)
@@ -340,6 +438,55 @@ class TimerManager: ObservableObject {
         } else if !shouldBlock && isBlockingActive {
             unblockIfNeeded()
         }
+    }
+
+    // MARK: - Crash/kill recovery checkpoint
+
+    private func saveCheckpoint() {
+        guard currentPhase == .work, let start = sessionStartTime else {
+            clearCheckpoint(); return
+        }
+        var data: [String: Any] = [
+            "sessionStartTime": start.timeIntervalSince1970,
+            "elapsedBeforePause": elapsedBeforePause,
+            "totalTime": totalTime,
+            "currentLabel": currentLabel
+        ]
+        if let resume = lastResumeTime {
+            data["lastResumeTime"] = resume.timeIntervalSince1970
+        }
+        UserDefaults.standard.set(data, forKey: Self.checkpointKey)
+    }
+
+    private func clearCheckpoint() {
+        UserDefaults.standard.removeObject(forKey: Self.checkpointKey)
+    }
+
+    /// Called at launch. If the app was killed mid-session, saves the partial work time.
+    func recoverPartialSession(into store: SessionStore) {
+        guard let data = UserDefaults.standard.dictionary(forKey: Self.checkpointKey) else { return }
+        clearCheckpoint()
+
+        guard let startEpoch = data["sessionStartTime"] as? Double,
+              let elapsed0 = data["elapsedBeforePause"] as? Double else { return }
+
+        var elapsed = elapsed0
+        if let resumeEpoch = data["lastResumeTime"] as? Double {
+            // It was running when killed — add time from last resume up to now
+            elapsed += Date().timeIntervalSince(Date(timeIntervalSince1970: resumeEpoch))
+        }
+        if let total = data["totalTime"] as? Double {
+            elapsed = min(elapsed, total)
+        }
+        guard elapsed >= 60 else { return }
+
+        let label = data["currentLabel"] as? String
+        store.addSession(WorkSession(
+            startTime: Date(timeIntervalSince1970: startEpoch),
+            durationMinutes: elapsed / 60.0,
+            type: .work,
+            label: label?.isEmpty == false ? label : nil
+        ))
     }
 
     // MARK: - Notifications

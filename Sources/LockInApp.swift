@@ -16,6 +16,7 @@ struct LockInApp: App {
         let store = SessionStore()
         let appSettings = AppSettings()
         let timer = TimerManager()
+        timer.recoverPartialSession(into: store)
         timer.sessionStore = store
         timer.settings = appSettings
         timer.applySettings()
