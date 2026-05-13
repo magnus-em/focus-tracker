@@ -1,6 +1,21 @@
 import SwiftUI
 
-// MARK: - Difficulty colour
+// MARK: - Colour extensions (SwiftUI-side only)
+
+extension ProblemDomain {
+    var color: Color {
+        switch self {
+        case .quant: return Color(red: 0.27, green: 0.62, blue: 0.83)
+        case .swe:   return Color(red: 0.25, green: 0.72, blue: 0.53)
+        }
+    }
+    var icon: String {
+        switch self {
+        case .quant: return "function"
+        case .swe:   return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+}
 
 extension ProblemDifficulty {
     var color: Color {
@@ -12,20 +27,12 @@ extension ProblemDifficulty {
     }
 }
 
-// MARK: - Domain accent colours (SwiftUI-side extension)
-
-extension ProblemDomain {
+extension Confidence {
     var color: Color {
         switch self {
-        case .quant: return Color(red: 0.27, green: 0.62, blue: 0.83)
-        case .swe:   return Color(red: 0.25, green: 0.72, blue: 0.53)
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .quant: return "function"
-        case .swe:   return "chevron.left.forwardslash.chevron.right"
+        case .solid:     return Color(red: 0.22, green: 0.72, blue: 0.45)
+        case .shaky:     return Color(red: 0.98, green: 0.70, blue: 0.18)
+        case .struggled: return Color(red: 0.96, green: 0.36, blue: 0.36)
         }
     }
 }
@@ -37,19 +44,28 @@ struct ProblemsView: View {
     @ObservedObject var settings: AppSettings
 
     @State private var showLog = false
+    @State private var reviewExpanded = true
 
     var body: some View {
         ZStack {
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: 12) {
                     goalSection
-                    Divider().padding(.horizontal, 8)
+
+                    if !store.needsReviewItems.isEmpty {
+                        reviewCard
+                    }
+
+                    progressCard
+
                     logButton
+
                     Divider().padding(.horizontal, 8)
+
                     recentSection
                 }
-                .padding(.vertical, 14)
-                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 18)
             }
 
             if showLog {
@@ -59,10 +75,10 @@ struct ProblemsView: View {
         }
     }
 
-    // MARK: Goal bars
+    // MARK: - Goal bars
 
     private var goalSection: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             ForEach(ProblemDomain.allCases, id: \.self) { domain in
                 GoalBar(
                     domain: domain,
@@ -73,12 +89,157 @@ struct ProblemsView: View {
         }
     }
 
-    // MARK: Log button
+    // MARK: - Review queue
+
+    private var reviewCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.easeInOut(duration: 0.2)) { reviewExpanded.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Text("NEEDS REVIEW")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1)
+                        .foregroundStyle(.orange)
+                    Text("\(store.needsReviewItems.count)")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.orange)
+                        .clipShape(Capsule())
+                    Spacer()
+                    Image(systemName: reviewExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+
+            if reviewExpanded {
+                Divider().padding(.horizontal, 10)
+                VStack(spacing: 0) {
+                    ForEach(store.needsReviewItems.prefix(6)) { item in
+                        ReviewRow(item: item, store: store)
+                    }
+                    if store.needsReviewItems.count > 6 {
+                        Text("+ \(store.needsReviewItems.count - 6) more")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                    }
+                }
+            }
+        }
+        .background(Color.orange.opacity(0.06))
+        .cornerRadius(10)
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.2), lineWidth: 1))
+    }
+
+    // MARK: - Progress card
+
+    private var progressCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("LAST 7 DAYS")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(.secondary)
+
+            let days = store.dailyCounts(days: 7)
+            let maxCount = max(1, days.map { $0.count }.max() ?? 1)
+
+            // Bar chart
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(days, id: \.date) { day in
+                    VStack(spacing: 2) {
+                        if day.count > 0 {
+                            Text("\(day.count)")
+                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(" ")
+                                .font(.system(size: 8))
+                        }
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(day.count > 0
+                                  ? Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.7)
+                                  : Color.secondary.opacity(0.1))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: max(4, 36 * CGFloat(day.count) / CGFloat(maxCount)))
+                        Text(weekdayLetter(day.date))
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 60)
+
+            // Stats row
+            HStack(spacing: 0) {
+                let thisWeek  = store.thisWeekCount
+                let lastWeek  = store.lastWeekCount
+                let delta     = thisWeek - lastWeek
+                let rate      = store.cleanSolveRate
+
+                VStack(spacing: 1) {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text("\(thisWeek)")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                        if lastWeek > 0 {
+                            Text(delta >= 0 ? "+\(delta)" : "\(delta)")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(delta >= 0 ? .green : .red)
+                        }
+                    }
+                    Text("this week")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                Divider().frame(height: 26)
+
+                VStack(spacing: 1) {
+                    Text(String(format: "%.0f%%", rate * 100))
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(rate >= 0.8 ? .green : rate >= 0.5 ? Color.orange : .red)
+                    Text("clean")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+
+                Divider().frame(height: 26)
+
+                HStack(spacing: 6) {
+                    ForEach(store.countByDifficulty(), id: \.difficulty) { item in
+                        VStack(spacing: 1) {
+                            Text("\(item.count)")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(item.difficulty.color)
+                            Text(String(item.difficulty.rawValue.prefix(1)))
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+    }
+
+    // MARK: - Log button
 
     private var logButton: some View {
-        Button {
-            showLog = true
-        } label: {
+        Button { showLog = true } label: {
             HStack(spacing: 7) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 14, weight: .semibold))
@@ -99,7 +260,7 @@ struct ProblemsView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Recent list
+    // MARK: - Recent list
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -117,12 +278,11 @@ struct ProblemsView: View {
                     .padding(.vertical, 8)
             } else {
                 ForEach(Array(days), id: \.date) { group in
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(dayLabel(group.date))
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.tertiary)
                             .padding(.bottom, 1)
-
                         ForEach(group.problems.prefix(8)) { problem in
                             ProblemRow(problem: problem)
                         }
@@ -132,13 +292,19 @@ struct ProblemsView: View {
         }
     }
 
+    // MARK: - Helpers
+
     private func dayLabel(_ date: Date) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(date) { return "Today" }
         if cal.isDateInYesterday(date) { return "Yesterday" }
-        let f = DateFormatter()
-        f.dateFormat = "MMM d"
+        let f = DateFormatter(); f.dateFormat = "MMM d"
         return f.string(from: date)
+    }
+
+    private func weekdayLetter(_ date: Date) -> String {
+        let idx = Calendar.current.component(.weekday, from: date) - 1
+        return ["S","M","T","W","T","F","S"][idx]
     }
 }
 
@@ -182,14 +348,11 @@ private struct GoalBar: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
             if goal > 0 {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(domain.color.opacity(0.1))
-                        Capsule()
-                            .fill(domain.color.opacity(0.85))
+                        Capsule().fill(domain.color.opacity(0.1))
+                        Capsule().fill(domain.color.opacity(0.85))
                             .frame(width: geo.size.width * progress)
                     }
                 }
@@ -200,14 +363,66 @@ private struct GoalBar: View {
         .padding(10)
         .background(domain.color.opacity(0.05))
         .cornerRadius(10)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(domain.color.opacity(0.12), lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(domain.color.opacity(0.12), lineWidth: 1))
     }
 }
 
-// MARK: - Single problem row
+// MARK: - Review queue row
+
+private struct ReviewRow: View {
+    let item: ProblemEntry
+    @ObservedObject var store: ProblemStore
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                if !item.title.isEmpty {
+                    Text(item.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                HStack(spacing: 4) {
+                    Text(item.categories.prefix(2).joined(separator: " · "))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text("·")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Text(item.difficulty.rawValue)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(item.difficulty.color)
+                    Text("·")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Text(item.domain.rawValue)
+                        .font(.system(size: 10))
+                        .foregroundStyle(item.domain.color)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.vertical, 6)
+
+            Spacer()
+
+            Button {
+                withAnimation { store.clearReview(id: item.id) }
+            } label: {
+                Text("Done")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.12))
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 10)
+        }
+    }
+}
+
+// MARK: - Recent problem row
 
 private struct ProblemRow: View {
     let problem: ProblemEntry
@@ -215,7 +430,7 @@ private struct ProblemRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(problem.domain.color)
+                .fill(problem.confidence.color)
                 .frame(width: 6, height: 6)
                 .padding(.top, 1)
 
@@ -236,6 +451,12 @@ private struct ProblemRow: View {
             }
 
             Spacer()
+
+            if problem.needsReview {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+            }
 
             Text(problem.difficulty.rawValue)
                 .font(.system(size: 9, weight: .semibold))
@@ -265,6 +486,8 @@ struct LogProblemOverlay: View {
     @State private var selectedDomain: ProblemDomain = .quant
     @State private var selectedCategories: Set<String> = []
     @State private var selectedDifficulty: ProblemDifficulty = .medium
+    @State private var selectedConfidence: Confidence = .solid
+    @State private var usedAIHelp = false
     @State private var title: String = ""
     @State private var justLogged = false
 
@@ -282,9 +505,7 @@ struct LogProblemOverlay: View {
                         .tracking(1.5)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button {
-                        isShowing = false
-                    } label: {
+                    Button { isShowing = false } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 16))
                             .foregroundStyle(.tertiary)
@@ -298,11 +519,12 @@ struct LogProblemOverlay: View {
                 Divider()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Domain selector
+                    VStack(alignment: .leading, spacing: 14) {
+
+                        // Domain
                         HStack(spacing: 8) {
                             ForEach(ProblemDomain.allCases, id: \.self) { domain in
-                                let selected = selectedDomain == domain
+                                let sel = selectedDomain == domain
                                 Button {
                                     selectedDomain = domain
                                     selectedCategories = []
@@ -313,50 +535,49 @@ struct LogProblemOverlay: View {
                                         Text(domain.rawValue)
                                             .font(.system(size: 13, weight: .semibold))
                                     }
-                                    .foregroundStyle(selected ? .white : domain.color)
+                                    .foregroundStyle(sel ? .white : domain.color)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 9)
-                                    .background(selected ? domain.color : domain.color.opacity(0.1))
+                                    .background(sel ? domain.color : domain.color.opacity(0.1))
                                     .cornerRadius(9)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
 
-                        // Category picker
+                        // Category (multi-select)
                         VStack(alignment: .leading, spacing: 7) {
                             Text("CATEGORY")
                                 .font(.system(size: 10, weight: .bold))
                                 .tracking(1)
                                 .foregroundStyle(.secondary)
 
-                            let categories = selectedDomain.categories
                             let cols = [GridItem(.adaptive(minimum: 90), spacing: 6)]
                             LazyVGrid(columns: cols, spacing: 6) {
-                                ForEach(categories, id: \.self) { cat in
-                                    let selected = selectedCategories.contains(cat)
+                                ForEach(selectedDomain.categories, id: \.self) { cat in
+                                    let sel = selectedCategories.contains(cat)
                                     Button(cat) {
-                                        if selected { selectedCategories.remove(cat) }
-                                        else { selectedCategories.insert(cat) }
+                                        if sel { selectedCategories.remove(cat) }
+                                        else   { selectedCategories.insert(cat) }
                                     }
                                     .font(.system(size: 10, weight: .medium))
                                     .lineLimit(1)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 5)
                                     .frame(maxWidth: .infinity)
-                                    .background(selected ? selectedDomain.color.opacity(0.18) : Color.secondary.opacity(0.07))
-                                    .foregroundStyle(selected ? selectedDomain.color : Color.secondary)
+                                    .background(sel ? selectedDomain.color.opacity(0.18) : Color.secondary.opacity(0.07))
+                                    .foregroundStyle(sel ? selectedDomain.color : Color.secondary)
                                     .cornerRadius(6)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .stroke(selected ? selectedDomain.color.opacity(0.4) : Color.clear, lineWidth: 1)
+                                            .stroke(sel ? selectedDomain.color.opacity(0.4) : Color.clear, lineWidth: 1)
                                     )
                                     .buttonStyle(.plain)
                                 }
                             }
                         }
 
-                        // Difficulty picker
+                        // Difficulty
                         VStack(alignment: .leading, spacing: 7) {
                             Text("DIFFICULTY")
                                 .font(.system(size: 10, weight: .bold))
@@ -365,26 +586,76 @@ struct LogProblemOverlay: View {
 
                             HStack(spacing: 6) {
                                 ForEach(ProblemDifficulty.allCases, id: \.self) { diff in
-                                    let selected = selectedDifficulty == diff
-                                    Button(diff.rawValue) {
-                                        selectedDifficulty = diff
-                                    }
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 7)
-                                    .background(selected ? diff.color.opacity(0.18) : Color.secondary.opacity(0.07))
-                                    .foregroundStyle(selected ? diff.color : Color.secondary)
-                                    .cornerRadius(8)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(selected ? diff.color.opacity(0.5) : Color.clear, lineWidth: 1.5)
-                                    )
-                                    .buttonStyle(.plain)
+                                    let sel = selectedDifficulty == diff
+                                    Button(diff.rawValue) { selectedDifficulty = diff }
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 7)
+                                        .background(sel ? diff.color.opacity(0.18) : Color.secondary.opacity(0.07))
+                                        .foregroundStyle(sel ? diff.color : Color.secondary)
+                                        .cornerRadius(8)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(sel ? diff.color.opacity(0.5) : Color.clear, lineWidth: 1.5)
+                                        )
+                                        .buttonStyle(.plain)
                                 }
                             }
                         }
 
-                        // Optional title
+                        // Confidence
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("CONFIDENCE")
+                                .font(.system(size: 10, weight: .bold))
+                                .tracking(1)
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 6) {
+                                ForEach(Confidence.allCases, id: \.self) { conf in
+                                    let sel = selectedConfidence == conf
+                                    Button(conf.rawValue) { selectedConfidence = conf }
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 7)
+                                        .background(sel ? conf.color.opacity(0.18) : Color.secondary.opacity(0.07))
+                                        .foregroundStyle(sel ? conf.color : Color.secondary)
+                                        .cornerRadius(8)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(sel ? conf.color.opacity(0.5) : Color.clear, lineWidth: 1.5)
+                                        )
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        // AI help toggle
+                        Button { usedAIHelp.toggle() } label: {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Used AI assistance")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(usedAIHelp ? Color.orange : .primary)
+                                    Text("Adds to review queue — redo this one yourself")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                Spacer()
+                                Image(systemName: usedAIHelp ? "checkmark.square.fill" : "square")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(usedAIHelp ? Color.orange : Color.secondary.opacity(0.4))
+                            }
+                            .padding(10)
+                            .background(usedAIHelp ? Color.orange.opacity(0.08) : Color.secondary.opacity(0.05))
+                            .cornerRadius(9)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .stroke(usedAIHelp ? Color.orange.opacity(0.3) : Color.clear, lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        // Note (optional)
                         VStack(alignment: .leading, spacing: 5) {
                             Text("NOTE (OPTIONAL)")
                                 .font(.system(size: 10, weight: .bold))
@@ -426,7 +697,7 @@ struct LogProblemOverlay: View {
                         .disabled(!canLog)
                         .animation(.easeInOut(duration: 0.2), value: justLogged)
                     }
-                    .padding(20)
+                    .padding(18)
                 }
             }
         }
@@ -437,11 +708,14 @@ struct LogProblemOverlay: View {
             title: title,
             domain: selectedDomain,
             categories: Array(selectedCategories),
-            difficulty: selectedDifficulty
+            difficulty: selectedDifficulty,
+            needsReview: usedAIHelp,
+            confidence: selectedConfidence
         ))
         justLogged = true
         title = ""
         selectedCategories = []
+        usedAIHelp = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
             justLogged = false
         }
