@@ -1,11 +1,16 @@
 import SwiftUI
 
+// Held at file scope so the hotkey survives for the app's lifetime,
+// regardless of SwiftUI's struct lifecycle.
+private var _pauseHotKey: GlobalHotKey?
+
 @main
 struct LockInApp: App {
     @StateObject private var timerManager: TimerManager
     @StateObject private var sessionStore: SessionStore
     @StateObject private var settings: AppSettings
-    @StateObject private var commitment: CommitmentManager
+    @StateObject private var problemStore: ProblemStore
+    @StateObject private var scratchStore: ScratchStore
 
     init() {
         let store = SessionStore()
@@ -18,10 +23,19 @@ struct LockInApp: App {
         _sessionStore = StateObject(wrappedValue: store)
         _settings = StateObject(wrappedValue: appSettings)
         _timerManager = StateObject(wrappedValue: timer)
-        _commitment = StateObject(wrappedValue: CommitmentManager())
+        _problemStore = StateObject(wrappedValue: ProblemStore())
+        _scratchStore = StateObject(wrappedValue: ScratchStore())
 
         // Clean up any stale /etc/hosts entries from a previous crash
         SiteBlocker.cleanupIfNeeded()
+
+        // Global hotkey: ⌃⌥Space toggles pause/resume.
+        _pauseHotKey = GlobalHotKey(
+            keyCode: GlobalHotKey.spaceKey,
+            modifiers: GlobalHotKey.controlModifier | GlobalHotKey.optionModifier
+        ) { [weak timer] in
+            timer?.toggleRunPause()
+        }
 
         // Ensure cleanup on app quit
         NotificationCenter.default.addObserver(
@@ -41,7 +55,8 @@ struct LockInApp: App {
                 timerManager: timerManager,
                 sessionStore: sessionStore,
                 settings: settings,
-                commitment: commitment
+                problemStore: problemStore,
+                scratchStore: scratchStore
             )
         } label: {
             if timerManager.isActive {
@@ -58,7 +73,8 @@ struct PopoverContent: View {
     @ObservedObject var timerManager: TimerManager
     @ObservedObject var sessionStore: SessionStore
     @ObservedObject var settings: AppSettings
-    @ObservedObject var commitment: CommitmentManager
+    @ObservedObject var problemStore: ProblemStore
+    @ObservedObject var scratchStore: ScratchStore
     @State private var selectedTab = 0
 
     var body: some View {
@@ -66,24 +82,25 @@ struct PopoverContent: View {
             Picker("", selection: $selectedTab) {
                 Image(systemName: "timer").tag(0)
                 Image(systemName: "chart.bar.fill").tag(1)
-                Image(systemName: "gearshape.fill").tag(2)
+                Image(systemName: "checklist").tag(2)
+                Image(systemName: "brain.head.profile").tag(3)
+                Image(systemName: "gearshape.fill").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.top, 10)
             .padding(.bottom, 2)
 
-            ZStack(alignment: .top) {
-                TimerView(timer: timerManager, store: sessionStore, settings: settings, commitment: commitment)
-                    .opacity(selectedTab == 0 ? 1 : 0)
-                    .allowsHitTesting(selectedTab == 0)
-                StatsView(store: sessionStore, settings: settings)
-                    .opacity(selectedTab == 1 ? 1 : 0)
-                    .allowsHitTesting(selectedTab == 1)
-                SettingsView(settings: settings, timer: timerManager, store: sessionStore)
-                    .opacity(selectedTab == 2 ? 1 : 0)
-                    .allowsHitTesting(selectedTab == 2)
+            Group {
+                switch selectedTab {
+                case 0: TimerView(timer: timerManager, store: sessionStore, settings: settings)
+                case 1: StatsView(store: sessionStore, settings: settings)
+                case 2: ProblemsView(store: problemStore, settings: settings)
+                case 3: ScratchpadView(store: scratchStore)
+                default: SettingsView(settings: settings, timer: timerManager, store: sessionStore)
+                }
             }
+            .frame(height: 430)
 
             Divider()
 
@@ -97,5 +114,6 @@ struct PopoverContent: View {
             .frame(maxWidth: .infinity)
         }
         .frame(width: 300)
+        .background(Color(NSColor.windowBackgroundColor))
     }
 }
