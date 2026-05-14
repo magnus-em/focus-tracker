@@ -109,7 +109,7 @@ struct StatsView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     private var streakBadge: some View {
@@ -180,7 +180,7 @@ struct StatsView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - Focus split (7d)
@@ -242,7 +242,7 @@ struct StatsView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - Heatmap
