@@ -37,11 +37,19 @@ class AppSettings: ObservableObject {
     @Published var tags: [String] {
         didSet { UserDefaults.standard.set(tags, forKey: "tags") }
     }
-    @Published var commitmentModeEnabled: Bool {
-        didSet { UserDefaults.standard.set(commitmentModeEnabled, forKey: "commitmentModeEnabled") }
+    /// Minutes a paused work session can sit before auto-saving + ending.
+    @Published var pauseGraceMinutes: Int {
+        didSet { UserDefaults.standard.set(pauseGraceMinutes, forKey: "pauseGraceMinutes") }
     }
-    @Published var commitmentVoiceEnabled: Bool {
-        didSet { UserDefaults.standard.set(commitmentVoiceEnabled, forKey: "commitmentVoiceEnabled") }
+
+    @Published var quantGoal: Int {
+        didSet { UserDefaults.standard.set(quantGoal, forKey: "quantGoal") }
+    }
+    @Published var sweGoal: Int {
+        didSet { UserDefaults.standard.set(sweGoal, forKey: "sweGoal") }
+    }
+    @Published var problemSources: [String] {
+        didSet { UserDefaults.standard.set(problemSources, forKey: "problemSources") }
     }
 
     init() {
@@ -57,8 +65,10 @@ class AppSettings: ObservableObject {
             "soundEnabled": true,
             "siteBlockingEnabled": false,
             "blockDuringBreaks": false,
-            "commitmentModeEnabled": false,
-            "commitmentVoiceEnabled": false,
+            "pauseGraceMinutes": 10,
+            "quantGoal": 0,
+            "sweGoal": 0,
+            "problemSources": ["QuantGuide", "LeetCode"],
         ])
         workMinutes = d.double(forKey: "workMinutes")
         shortBreakMinutes = d.double(forKey: "shortBreakMinutes")
@@ -72,7 +82,9 @@ class AppSettings: ObservableObject {
         blockDuringBreaks = d.bool(forKey: "blockDuringBreaks")
         blockedSites = d.stringArray(forKey: "blockedSites") ?? []
         tags = d.stringArray(forKey: "tags") ?? []
-        commitmentModeEnabled = d.bool(forKey: "commitmentModeEnabled")
-        commitmentVoiceEnabled = d.bool(forKey: "commitmentVoiceEnabled")
+        pauseGraceMinutes = d.integer(forKey: "pauseGraceMinutes")
+        quantGoal = d.integer(forKey: "quantGoal")
+        sweGoal = d.integer(forKey: "sweGoal")
+        problemSources = d.stringArray(forKey: "problemSources") ?? ["QuantGuide", "LeetCode"]
     }
 }

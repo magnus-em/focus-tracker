@@ -5,126 +5,328 @@ struct StatsView: View {
     @ObservedObject var settings: AppSettings
     @State private var newTagText = ""
 
+    // Brand colors
     private let red = Color(red: 0.96, green: 0.36, blue: 0.36)
+    private let quantColor = Color(red: 0.27, green: 0.62, blue: 0.83)   // blue
+    private let sweColor   = Color(red: 0.96, green: 0.36, blue: 0.36)   // red
+    private let otherColor = Color(red: 0.30, green: 0.78, blue: 0.74)   // teal
 
-    private var weekTotal: Double {
-        store.dailySummaries(last: 7).reduce(0) { $0 + $1.totalWorkMinutes }
+    private func color(for tag: String) -> Color {
+        switch tag.lowercased() {
+        case "quant": return quantColor
+        case "swe":   return sweColor
+        default:      return otherColor
+        }
     }
+
+    // MARK: - Derived metrics
+
+    private var weekDelta: Double {
+        store.last7DaysMinutes - store.prior7DaysMinutes
+    }
+
+    private var avgSession: Double { store.averageSessionMinutes(last: 20) }
+
+    private var todayAtRisk: Bool {
+        let hour = Calendar.current.component(.hour, from: Date())
+        return store.currentStreak > 0 && store.todayWorkMinutes == 0 && hour >= 16
+    }
+
+    // MARK: - Body
 
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                // Summary cards
-                HStack(spacing: 0) {
-                    StatCard(value: formatMinutes(store.todayWorkMinutes), label: "Today")
-                    StatCard(value: formatMinutes(weekTotal), label: "This Week")
-                    StatCard(
-                        value: "\(store.currentStreak)",
-                        label: "Streak",
-                        icon: store.currentStreak > 0 ? "flame.fill" : "lock.fill",
-                        iconColor: store.currentStreak > 0 ? .orange : red
-                    )
-                }
 
-                // Heatmap
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("LAST 18 WEEKS")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(1.5)
-                        .foregroundStyle(.secondary)
-                    HeatmapView(data: store.heatmapData(weeks: 18))
-                }
+                todayCard
 
-                Divider().padding(.horizontal, 8)
+                weekCard
 
-                // Categories
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("CATEGORIES")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(1.5)
-                        .foregroundStyle(.secondary)
+                focusSplitCard
 
-                    let byTag = store.minutesByTag()
-                    let maxMins = byTag.first?.minutes ?? 1
+                heatmapCard
 
-                    if !byTag.isEmpty {
-                        VStack(spacing: 7) {
-                            ForEach(byTag, id: \.tag) { entry in
-                                HStack(spacing: 8) {
-                                    Text(entry.tag)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .lineLimit(1)
-                                        .frame(width: 72, alignment: .leading)
+                categoriesCard
 
-                                    // Proportional bar
-                                    ZStack(alignment: .leading) {
-                                        Capsule().fill(Color.secondary.opacity(0.08))
-                                        Capsule()
-                                            .fill(red.opacity(0.75))
-                                            .frame(width: 72 * CGFloat(entry.minutes / maxMins))
-                                    }
-                                    .frame(width: 72, height: 5)
-
-                                    Text(formatMinutes(entry.minutes))
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 40, alignment: .trailing)
-
-                                    // Remove from quick-select list
-                                    if settings.tags.contains(entry.tag) {
-                                        Button {
-                                            settings.tags.removeAll { $0 == entry.tag }
-                                        } label: {
-                                            Image(systemName: "xmark")
-                                                .font(.system(size: 8, weight: .bold))
-                                                .foregroundStyle(.tertiary)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Add new category
-                    HStack(spacing: 6) {
-                        TextField("New category...", text: $newTagText)
-                            .font(.system(size: 11))
-                            .textFieldStyle(.plain)
-                            .onSubmit { addTag() }
-                        if !newTagText.isEmpty {
-                            Button("Add") { addTag() }
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(red)
-                                .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.secondary.opacity(0.06))
-                    .cornerRadius(8)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.1), lineWidth: 0.5))
-                }
-
-                Divider().padding(.horizontal, 8)
-
-                // Lifetime stats
-                HStack(spacing: 0) {
-                    MiniStat(value: "\(store.totalWorkSessions)", label: "Total Sessions")
-                    MiniStat(value: formatHours(store.totalWorkHours), label: "Total Hours")
-                    MiniStat(
-                        value: "\(store.bestStreak)",
-                        label: "Best Streak",
-                        icon: "trophy.fill",
-                        iconColor: Color(red: 1.0, green: 0.75, blue: 0.2)
-                    )
-                    MiniStat(value: formatMinutes(store.bestDayMinutes), label: "Best Day")
-                }
+                lifetimeRow
             }
             .padding(.vertical, 14)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 18)
         }
     }
+
+    // MARK: - Today
+
+    @ViewBuilder
+    private var todayCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("TODAY")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                streakBadge
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 14) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(formatMinutes(store.todayWorkMinutes))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                    Text("focused")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(store.todaySessionCount)")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                    Text("sessions")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+
+            if settings.dailyGoal > 0 {
+                let pct = min(1.0, Double(store.todaySessionCount) / Double(settings.dailyGoal))
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("Daily goal")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(store.todaySessionCount) / \(settings.dailyGoal)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    ProgressBar(progress: pct, color: red)
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+    }
+
+    private var streakBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: store.currentStreak > 0
+                  ? (todayAtRisk ? "exclamationmark.triangle.fill" : "flame.fill")
+                  : "lock.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(store.currentStreak > 0
+                                 ? (todayAtRisk ? .orange : .orange)
+                                 : .secondary)
+            Text("\(store.currentStreak) day streak")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(todayAtRisk ? .orange : .primary)
+        }
+    }
+
+    // MARK: - This week
+
+    @ViewBuilder
+    private var weekCard: some View {
+        let last = store.last7DaysMinutes
+        let prior = store.prior7DaysMinutes
+        let delta = weekDelta
+        let isUp = delta >= 0
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("LAST 7 DAYS")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(formatMinutes(last))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+
+                if prior > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: isUp ? "arrow.up.right" : "arrow.down.right")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(formatMinutes(abs(delta)))
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(isUp ? .green : .red)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background((isUp ? Color.green : Color.red).opacity(0.1))
+                    .clipShape(Capsule())
+                    Text("vs prior 7d")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                MiniMetric(label: "Avg/day", value: formatMinutes(last / 7))
+                MiniMetric(label: "Avg session", value: formatMinutes(avgSession))
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+    }
+
+    // MARK: - Focus split (7d)
+
+    @ViewBuilder
+    private var focusSplitCard: some View {
+        let start = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))!
+        let split = store.minutesByTag(since: start)
+        let total = split.reduce(0.0) { $0 + $1.minutes }
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("FOCUS SPLIT — LAST 7 DAYS")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            if total == 0 {
+                Text("No tagged sessions yet.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            } else {
+                // Stacked horizontal bar
+                GeometryReader { geo in
+                    let w = geo.size.width
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.secondary.opacity(0.08))
+                        HStack(spacing: 0) {
+                            ForEach(split, id: \.tag) { entry in
+                                Rectangle()
+                                    .fill(color(for: entry.tag))
+                                    .frame(width: w * CGFloat(entry.minutes / total))
+                            }
+                        }
+                        .clipShape(Capsule())
+                    }
+                }
+                .frame(height: 10)
+
+                VStack(spacing: 4) {
+                    ForEach(split, id: \.tag) { entry in
+                        HStack(spacing: 6) {
+                            Circle().fill(color(for: entry.tag)).frame(width: 6, height: 6)
+                            Text(entry.tag)
+                                .font(.system(size: 11, weight: .medium))
+                            Spacer()
+                            Text(formatMinutes(entry.minutes))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Text("\(Int((entry.minutes / total) * 100))%")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+    }
+
+    // MARK: - Heatmap
+
+    @ViewBuilder
+    private var heatmapCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("LAST 18 WEEKS")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(.secondary)
+            HeatmapView(data: store.heatmapData(weeks: 18))
+        }
+    }
+
+    // MARK: - Categories (lifetime)
+
+    @ViewBuilder
+    private var categoriesCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("CATEGORIES — LIFETIME")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(.secondary)
+
+            let byTag = store.minutesByTag()
+            let maxMins = byTag.first?.minutes ?? 1
+
+            VStack(spacing: 6) {
+                ForEach(settings.tags, id: \.self) { tag in
+                    let minutes = byTag.first(where: { $0.tag == tag })?.minutes ?? 0
+                    HStack(spacing: 8) {
+                        Text(tag)
+                            .font(.system(size: 11, weight: .medium))
+                            .frame(width: 60, alignment: .leading)
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.08))
+                            Capsule()
+                                .fill(color(for: tag).opacity(0.75))
+                                .frame(width: 80 * CGFloat(minutes / max(maxMins, 1)))
+                        }
+                        .frame(width: 80, height: 5)
+                        Text(formatMinutes(minutes))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 50, alignment: .trailing)
+                        Spacer()
+                        Button {
+                            settings.tags.removeAll { $0 == tag }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            // Add new category
+            HStack(spacing: 6) {
+                TextField("New category…", text: $newTagText)
+                    .font(.system(size: 11))
+                    .textFieldStyle(.plain)
+                    .onSubmit { addTag() }
+                if !newTagText.isEmpty {
+                    Button("Add") { addTag() }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(red)
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.06))
+            .cornerRadius(8)
+        }
+    }
+
+    // MARK: - Lifetime mini-stats
+
+    @ViewBuilder
+    private var lifetimeRow: some View {
+        HStack(spacing: 0) {
+            MiniStat(value: "\(store.totalWorkSessions)", label: "Sessions")
+            MiniStat(value: formatHours(store.totalWorkHours), label: "Hours")
+            MiniStat(value: "\(store.bestStreak)",
+                     label: "Best Streak",
+                     icon: "trophy.fill",
+                     iconColor: Color(red: 1.0, green: 0.75, blue: 0.2))
+            MiniStat(value: formatMinutes(store.bestDayMinutes), label: "Best Day")
+        }
+    }
+
+    // MARK: - Helpers
 
     private func addTag() {
         let trimmed = newTagText.trimmingCharacters(in: .whitespaces)
@@ -143,7 +345,38 @@ struct StatsView: View {
     }
 }
 
-// MARK: - Heatmap
+// MARK: - Small UI helpers
+
+private struct MiniMetric: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(label).font(.system(size: 10)).foregroundStyle(.tertiary)
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct ProgressBar: View {
+    let progress: Double
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.1))
+                Capsule().fill(color).frame(width: geo.size.width * CGFloat(progress))
+            }
+        }
+        .frame(height: 6)
+    }
+}
+
+// MARK: - Heatmap (unchanged)
 
 struct HeatmapView: View {
     let data: [(date: Date, minutes: Double)]
@@ -198,22 +431,7 @@ struct HeatmapView: View {
     }
 }
 
-// MARK: - Stat cards
-
-struct StatCard: View {
-    let value: String; let label: String
-    var icon: String? = nil; var iconColor: Color = .primary
-    var body: some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 3) {
-                if let icon { Image(systemName: icon).font(.system(size: 12)).foregroundStyle(iconColor) }
-                Text(value).font(.system(size: 16, weight: .bold, design: .rounded))
-            }
-            Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
+// MARK: - Lifetime mini-stat
 
 struct MiniStat: View {
     let value: String; let label: String
@@ -225,6 +443,22 @@ struct MiniStat: View {
                 Text(value).font(.system(size: 12, weight: .semibold, design: .rounded))
             }
             Text(label).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// Keep StatCard used elsewhere (in case)
+struct StatCard: View {
+    let value: String; let label: String
+    var icon: String? = nil; var iconColor: Color = .primary
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 3) {
+                if let icon { Image(systemName: icon).font(.system(size: 12)).foregroundStyle(iconColor) }
+                Text(value).font(.system(size: 16, weight: .bold, design: .rounded))
+            }
+            Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
     }

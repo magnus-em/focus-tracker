@@ -44,33 +44,45 @@ struct ProblemEntry: Codable, Identifiable {
     let difficulty: ProblemDifficulty
     var needsReview: Bool
     var confidence: Confidence
+    var source: String
+    var notes: String
+    var solveMinutes: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, date, title, domain, categories, difficulty, needsReview, confidence
+        case id, date, title, domain, categories, difficulty
+        case needsReview, confidence, source, notes, solveMinutes
     }
 
-    init(title: String = "", domain: ProblemDomain, categories: [String],
-         difficulty: ProblemDifficulty, needsReview: Bool = false, confidence: Confidence = .solid) {
+    init(title: String, domain: ProblemDomain, categories: [String],
+         difficulty: ProblemDifficulty, source: String = "",
+         needsReview: Bool = false, confidence: Confidence = .solid,
+         notes: String = "", solveMinutes: Int? = nil) {
         self.id = UUID()
         self.date = Date()
         self.title = title
         self.domain = domain
         self.categories = categories
         self.difficulty = difficulty
+        self.source = source
         self.needsReview = needsReview
         self.confidence = confidence
+        self.notes = notes
+        self.solveMinutes = solveMinutes
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id         = try c.decode(UUID.self,            forKey: .id)
-        date       = try c.decode(Date.self,            forKey: .date)
-        title      = try c.decode(String.self,          forKey: .title)
-        domain     = try c.decode(ProblemDomain.self,   forKey: .domain)
-        categories = try c.decode([String].self,        forKey: .categories)
-        difficulty = try c.decode(ProblemDifficulty.self, forKey: .difficulty)
-        needsReview = try c.decodeIfPresent(Bool.self,       forKey: .needsReview) ?? false
-        confidence  = try c.decodeIfPresent(Confidence.self, forKey: .confidence)  ?? .solid
+        id           = try c.decode(UUID.self,              forKey: .id)
+        date         = try c.decode(Date.self,              forKey: .date)
+        title        = try c.decode(String.self,            forKey: .title)
+        domain       = try c.decode(ProblemDomain.self,     forKey: .domain)
+        categories   = try c.decode([String].self,          forKey: .categories)
+        difficulty   = try c.decode(ProblemDifficulty.self, forKey: .difficulty)
+        needsReview  = try c.decodeIfPresent(Bool.self,        forKey: .needsReview)  ?? false
+        confidence   = try c.decodeIfPresent(Confidence.self,  forKey: .confidence)   ?? .solid
+        source       = try c.decodeIfPresent(String.self,      forKey: .source)       ?? ""
+        notes        = try c.decodeIfPresent(String.self,      forKey: .notes)        ?? ""
+        solveMinutes = try c.decodeIfPresent(Int.self,         forKey: .solveMinutes)
     }
 }
 

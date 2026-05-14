@@ -191,4 +191,44 @@ class SessionStore: ObservableObject {
         let total = summaries.reduce(0) { $0 + $1.totalWorkMinutes }
         return total / Double(activeDays)
     }
+
+    // MARK: - Ranged queries
+
+    func workMinutes(since start: Date, until end: Date? = nil) -> Double {
+        let end = end ?? Date()
+        return sessions.filter {
+            $0.type == .work && $0.startTime >= start && $0.startTime < end
+        }.reduce(0.0) { $0 + $1.durationMinutes }
+    }
+
+    func minutesByTag(since start: Date, until end: Date? = nil) -> [(tag: String, minutes: Double)] {
+        let end = end ?? Date()
+        var dict: [String: Double] = [:]
+        for s in sessions where s.type == .work && s.startTime >= start && s.startTime < end {
+            guard let label = s.label, !label.isEmpty else { continue }
+            dict[label, default: 0] += s.durationMinutes
+        }
+        return dict.map { (tag: $0.key, minutes: $0.value) }.sorted { $0.minutes > $1.minutes }
+    }
+
+    /// Last 7 days (rolling, including today).
+    var last7DaysMinutes: Double {
+        let start = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))!
+        return workMinutes(since: start)
+    }
+
+    /// The 7-day window before `last7Days` (days -13 through -7).
+    var prior7DaysMinutes: Double {
+        let cal = Calendar.current
+        let start = cal.date(byAdding: .day, value: -13, to: cal.startOfDay(for: Date()))!
+        let end = cal.date(byAdding: .day, value: -6, to: cal.startOfDay(for: Date()))!
+        return workMinutes(since: start, until: end)
+    }
+
+    /// Average minutes/session over the last `n` work sessions.
+    func averageSessionMinutes(last n: Int = 20) -> Double {
+        let recent = sessions.filter { $0.type == .work }.suffix(n)
+        guard !recent.isEmpty else { return 0 }
+        return recent.reduce(0.0) { $0 + $1.durationMinutes } / Double(recent.count)
+    }
 }

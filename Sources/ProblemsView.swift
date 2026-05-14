@@ -44,6 +44,7 @@ struct ProblemsView: View {
     @ObservedObject var settings: AppSettings
 
     @State private var showLog = false
+    @State private var selectedProblem: ProblemEntry? = nil
     @State private var reviewExpanded = true
 
     var body: some View {
@@ -69,8 +70,22 @@ struct ProblemsView: View {
             }
 
             if showLog {
-                LogProblemOverlay(store: store, isShowing: $showLog)
+                LogProblemOverlay(store: store, settings: settings, isShowing: $showLog)
                     .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+                    .zIndex(1)
+            }
+
+            if selectedProblem != nil {
+                ProblemDetailView(
+                    store: store,
+                    problem: selectedProblem!,
+                    isShowing: Binding(
+                        get: { selectedProblem != nil },
+                        set: { if !$0 { selectedProblem = nil } }
+                    )
+                )
+                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+                .zIndex(2)
             }
         }
     }
@@ -93,7 +108,9 @@ struct ProblemsView: View {
 
     private var reviewCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.easeInOut(duration: 0.2)) { reviewExpanded.toggle() } } label: {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { reviewExpanded.toggle() }
+            } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise.circle.fill")
                         .font(.system(size: 11))
@@ -123,7 +140,9 @@ struct ProblemsView: View {
                 Divider().padding(.horizontal, 10)
                 VStack(spacing: 0) {
                     ForEach(store.needsReviewItems.prefix(6)) { item in
-                        ReviewRow(item: item, store: store)
+                        ReviewRow(item: item, store: store) {
+                            selectedProblem = item
+                        }
                     }
                     if store.needsReviewItems.count > 6 {
                         Text("+ \(store.needsReviewItems.count - 6) more")
@@ -153,7 +172,6 @@ struct ProblemsView: View {
             let days = store.dailyCounts(days: 7)
             let maxCount = max(1, days.map { $0.count }.max() ?? 1)
 
-            // Bar chart
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(days, id: \.date) { day in
                     VStack(spacing: 2) {
@@ -162,8 +180,7 @@ struct ProblemsView: View {
                                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text(" ")
-                                .font(.system(size: 8))
+                            Text(" ").font(.system(size: 8))
                         }
                         RoundedRectangle(cornerRadius: 3)
                             .fill(day.count > 0
@@ -180,12 +197,11 @@ struct ProblemsView: View {
             }
             .frame(height: 60)
 
-            // Stats row
             HStack(spacing: 0) {
-                let thisWeek  = store.thisWeekCount
-                let lastWeek  = store.lastWeekCount
-                let delta     = thisWeek - lastWeek
-                let rate      = store.cleanSolveRate
+                let thisWeek = store.thisWeekCount
+                let lastWeek = store.lastWeekCount
+                let delta    = thisWeek - lastWeek
+                let rate     = store.cleanSolveRate
 
                 VStack(spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -197,9 +213,7 @@ struct ProblemsView: View {
                                 .foregroundStyle(delta >= 0 ? .green : .red)
                         }
                     }
-                    Text("this week")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
+                    Text("this week").font(.system(size: 9)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
 
@@ -209,9 +223,7 @@ struct ProblemsView: View {
                     Text(String(format: "%.0f%%", rate * 100))
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(rate >= 0.8 ? .green : rate >= 0.5 ? Color.orange : .red)
-                    Text("clean")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
+                    Text("clean").font(.system(size: 9)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
 
@@ -284,7 +296,10 @@ struct ProblemsView: View {
                             .foregroundStyle(.tertiary)
                             .padding(.bottom, 1)
                         ForEach(group.problems.prefix(8)) { problem in
-                            ProblemRow(problem: problem)
+                            Button { selectedProblem = problem } label: {
+                                ProblemRow(problem: problem)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -372,38 +387,39 @@ private struct GoalBar: View {
 private struct ReviewRow: View {
     let item: ProblemEntry
     @ObservedObject var store: ProblemStore
+    let onTap: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                if !item.title.isEmpty {
-                    Text(item.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
+        HStack(spacing: 0) {
+            Button(action: onTap) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title.isEmpty ? item.categories.joined(separator: " · ") : item.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            if !item.source.isEmpty {
+                                Text(item.source)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                                Text("·").font(.system(size: 10)).foregroundStyle(.tertiary)
+                            }
+                            Text(item.difficulty.rawValue)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(item.difficulty.color)
+                            Text("·").font(.system(size: 10)).foregroundStyle(.tertiary)
+                            Text(item.domain.rawValue)
+                                .font(.system(size: 10))
+                                .foregroundStyle(item.domain.color)
+                        }
+                    }
+                    Spacer()
                 }
-                HStack(spacing: 4) {
-                    Text(item.categories.prefix(2).joined(separator: " · "))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Text("·")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                    Text(item.difficulty.rawValue)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(item.difficulty.color)
-                    Text("·")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                    Text(item.domain.rawValue)
-                        .font(.system(size: 10))
-                        .foregroundStyle(item.domain.color)
-                }
+                .padding(.leading, 12)
+                .padding(.vertical, 7)
             }
-            .padding(.leading, 10)
-            .padding(.vertical, 6)
-
-            Spacer()
+            .buttonStyle(.plain)
 
             Button {
                 withAnimation { store.clearReview(id: item.id) }
@@ -435,17 +451,19 @@ private struct ProblemRow: View {
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 1) {
-                if !problem.title.isEmpty {
-                    Text(problem.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
+                Text(problem.title.isEmpty ? problem.categories.joined(separator: " · ") : problem.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if !problem.source.isEmpty {
+                        Text(problem.source)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        Text("·").font(.system(size: 9)).foregroundStyle(.quaternary)
+                    }
                     Text(problem.categories.joined(separator: " · "))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else {
-                    Text(problem.categories.joined(separator: " · "))
-                        .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
                 }
             }
@@ -465,15 +483,8 @@ private struct ProblemRow: View {
                 .padding(.vertical, 2)
                 .background(problem.difficulty.color.opacity(0.12))
                 .cornerRadius(4)
-
-            Text(problem.domain.rawValue)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(problem.domain.color.opacity(0.85))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(problem.domain.color.opacity(0.1))
-                .cornerRadius(4)
         }
+        .contentShape(Rectangle())
     }
 }
 
@@ -481,24 +492,35 @@ private struct ProblemRow: View {
 
 struct LogProblemOverlay: View {
     @ObservedObject var store: ProblemStore
+    @ObservedObject var settings: AppSettings
     @Binding var isShowing: Bool
 
+    @State private var title: String = ""
+    @State private var selectedSource: String = ""
     @State private var selectedDomain: ProblemDomain = .quant
     @State private var selectedCategories: Set<String> = []
     @State private var selectedDifficulty: ProblemDifficulty = .medium
+    @State private var selectedSolveMinutes: Int? = nil
     @State private var selectedConfidence: Confidence = .solid
     @State private var usedAIHelp = false
-    @State private var title: String = ""
-    @State private var justLogged = false
+    @FocusState private var titleFocused: Bool
 
-    private var canLog: Bool { !selectedCategories.isEmpty }
+    private let solveOptions: [(String, Int?)] = [
+        ("—", nil), ("< 5m", 3), ("5–15m", 10), ("15–30m", 22), ("30m+", 45)
+    ]
+
+    private var canLog: Bool {
+        let hasTitle = !title.trimmingCharacters(in: .whitespaces).isEmpty
+        let hasCats  = !selectedCategories.isEmpty
+        let hasSource = settings.problemSources.isEmpty || !selectedSource.isEmpty
+        return hasTitle && hasCats && hasSource
+    }
 
     var body: some View {
         ZStack {
             Color(NSColor.windowBackgroundColor).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Header
                 HStack {
                     Text("LOG A PROBLEM")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -520,6 +542,62 @@ struct LogProblemOverlay: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
+
+                        // Title — required
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 4) {
+                                Text("NAME")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundStyle(.secondary)
+                                Text("required")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            TextField("e.g. Two Sum, Coin Flip Variance", text: $title)
+                                .font(.system(size: 13, weight: .medium))
+                                .textFieldStyle(.plain)
+                                .focused($titleFocused)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(Color.secondary.opacity(0.07))
+                                .cornerRadius(8)
+                                .onSubmit { if canLog { logAndClose() } }
+                        }
+
+                        // Source — required if sources configured
+                        if !settings.problemSources.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack(spacing: 4) {
+                                    Text("SOURCE")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .tracking(1)
+                                        .foregroundStyle(.secondary)
+                                    Text("required")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 6) {
+                                        ForEach(settings.problemSources, id: \.self) { src in
+                                            let sel = selectedSource == src
+                                            Button(src) { selectedSource = sel ? "" : src }
+                                                .font(.system(size: 11, weight: .medium))
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                                .background(sel ? Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.18) : Color.secondary.opacity(0.07))
+                                                .foregroundStyle(sel ? Color(red: 0.27, green: 0.62, blue: 0.83) : Color.secondary)
+                                                .cornerRadius(8)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 8)
+                                                        .stroke(sel ? Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.4) : Color.clear, lineWidth: 1)
+                                                )
+                                                .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         // Domain
                         HStack(spacing: 8) {
@@ -545,13 +623,17 @@ struct LogProblemOverlay: View {
                             }
                         }
 
-                        // Category (multi-select)
+                        // Category — multi-select
                         VStack(alignment: .leading, spacing: 7) {
-                            Text("CATEGORY")
-                                .font(.system(size: 10, weight: .bold))
-                                .tracking(1)
-                                .foregroundStyle(.secondary)
-
+                            HStack(spacing: 4) {
+                                Text("CATEGORY")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundStyle(.secondary)
+                                Text("required")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                            }
                             let cols = [GridItem(.adaptive(minimum: 90), spacing: 6)]
                             LazyVGrid(columns: cols, spacing: 6) {
                                 ForEach(selectedDomain.categories, id: \.self) { cat in
@@ -583,7 +665,6 @@ struct LogProblemOverlay: View {
                                 .font(.system(size: 10, weight: .bold))
                                 .tracking(1)
                                 .foregroundStyle(.secondary)
-
                             HStack(spacing: 6) {
                                 ForEach(ProblemDifficulty.allCases, id: \.self) { diff in
                                     let sel = selectedDifficulty == diff
@@ -603,13 +684,42 @@ struct LogProblemOverlay: View {
                             }
                         }
 
+                        // Solve time — optional
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 4) {
+                                Text("SOLVE TIME")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundStyle(.secondary)
+                                Text("optional")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.quaternary)
+                            }
+                            HStack(spacing: 5) {
+                                ForEach(solveOptions, id: \.0) { label, value in
+                                    let sel = selectedSolveMinutes == value
+                                    Button(label) { selectedSolveMinutes = value }
+                                        .font(.system(size: 10, weight: .medium))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 6)
+                                        .background(sel ? Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.18) : Color.secondary.opacity(0.07))
+                                        .foregroundStyle(sel ? Color(red: 0.27, green: 0.62, blue: 0.83) : Color.secondary)
+                                        .cornerRadius(7)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7)
+                                                .stroke(sel ? Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.4) : Color.clear, lineWidth: 1)
+                                        )
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
                         // Confidence
                         VStack(alignment: .leading, spacing: 7) {
                             Text("CONFIDENCE")
                                 .font(.system(size: 10, weight: .bold))
                                 .tracking(1)
                                 .foregroundStyle(.secondary)
-
                             HStack(spacing: 6) {
                                 ForEach(Confidence.allCases, id: \.self) { conf in
                                     let sel = selectedConfidence == conf
@@ -629,7 +739,7 @@ struct LogProblemOverlay: View {
                             }
                         }
 
-                        // AI help toggle
+                        // AI help
                         Button { usedAIHelp.toggle() } label: {
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -655,69 +765,39 @@ struct LogProblemOverlay: View {
                         }
                         .buttonStyle(.plain)
 
-                        // Note (optional)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("NOTE (OPTIONAL)")
-                                .font(.system(size: 10, weight: .bold))
-                                .tracking(1)
-                                .foregroundStyle(.secondary)
-
-                            TextField("e.g. 'Coin flip variance' or #237", text: $title)
-                                .font(.system(size: 12))
-                                .textFieldStyle(.plain)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(Color.secondary.opacity(0.07))
-                                .cornerRadius(7)
-                                .onSubmit { if canLog { logAndReset() } }
-                        }
-
-                        // Log button
+                        // Log
                         Button {
-                            if canLog { logAndReset() }
+                            if canLog { logAndClose() }
                         } label: {
-                            HStack(spacing: 6) {
-                                if justLogged {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 14))
-                                    Text("Logged!")
-                                        .font(.system(size: 13, weight: .semibold))
-                                } else {
-                                    Text("Log Problem")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                            }
-                            .foregroundStyle(canLog ? .white : Color.secondary.opacity(0.4))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(canLog ? selectedDomain.color : Color.secondary.opacity(0.1))
-                            .cornerRadius(10)
+                            Text("Log Problem")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(canLog ? .white : Color.secondary.opacity(0.4))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(canLog ? selectedDomain.color : Color.secondary.opacity(0.1))
+                                .cornerRadius(10)
                         }
                         .buttonStyle(.plain)
                         .disabled(!canLog)
-                        .animation(.easeInOut(duration: 0.2), value: justLogged)
                     }
                     .padding(18)
                 }
             }
         }
+        .onAppear { titleFocused = true }
     }
 
-    private func logAndReset() {
+    private func logAndClose() {
         store.add(ProblemEntry(
-            title: title,
+            title: title.trimmingCharacters(in: .whitespaces),
             domain: selectedDomain,
             categories: Array(selectedCategories),
             difficulty: selectedDifficulty,
+            source: selectedSource,
             needsReview: usedAIHelp,
-            confidence: selectedConfidence
+            confidence: selectedConfidence,
+            solveMinutes: selectedSolveMinutes
         ))
-        justLogged = true
-        title = ""
-        selectedCategories = []
-        usedAIHelp = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-            justLogged = false
-        }
+        isShowing = false
     }
 }

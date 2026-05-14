@@ -23,6 +23,17 @@ class ProblemStore: ObservableObject {
         save()
     }
 
+    func update(_ entry: ProblemEntry) {
+        guard let i = problems.firstIndex(where: { $0.id == entry.id }) else { return }
+        problems[i] = entry
+        save()
+    }
+
+    func delete(id: UUID) {
+        problems.removeAll { $0.id == id }
+        save()
+    }
+
     func clearReview(id: UUID) {
         guard let i = problems.firstIndex(where: { $0.id == id }) else { return }
         problems[i].needsReview = false
