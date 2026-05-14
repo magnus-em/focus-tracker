@@ -6,13 +6,13 @@ import SwiftUI
 class DashboardWindowController: ObservableObject {
     private var window: NSWindow?
 
-    func open(sessionStore: SessionStore, problemStore: ProblemStore, settings: AppSettings, dayStore: DayStore) {
+    func open(sessionStore: SessionStore, problemStore: ProblemStore, settings: AppSettings, dayStore: DayStore, timerManager: TimerManager) {
         if let w = window {
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let view = DashboardView(sessionStore: sessionStore, problemStore: problemStore, settings: settings, dayStore: dayStore)
+        let view = DashboardView(sessionStore: sessionStore, problemStore: problemStore, settings: settings, dayStore: dayStore, timerManager: timerManager)
         let vc = NSHostingController(rootView: view)
         let w = NSWindow(contentViewController: vc)
         w.title = "Focus"
@@ -30,7 +30,12 @@ class DashboardWindowController: ObservableObject {
 // MARK: - Shared log event type
 
 private struct DayEvent: Identifiable {
-    enum Kind { case focus(WorkSession); case breakSession(WorkSession); case problem(ProblemEntry) }
+    enum Kind {
+        case focus(WorkSession)
+        case breakSession(WorkSession)
+        case problem(ProblemEntry)
+        case inProgressFocus(start: Date, elapsedMinutes: Double, label: String?)
+    }
     let id: String
     let time: Date
     let kind: Kind
@@ -54,6 +59,7 @@ struct DashboardView: View {
     @ObservedObject var problemStore: ProblemStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var dayStore: DayStore
+    @ObservedObject var timerManager: TimerManager
 
     @State private var editingEvent: DayEvent? = nil
 
@@ -73,7 +79,21 @@ struct DashboardView: View {
         let problems = problemStore.problems
             .filter { cal.isDateInToday($0.date) }
             .map { DayEvent(id: $0.id.uuidString, time: $0.date, kind: .problem($0)) }
-        return (focus + breaks + problems).sorted { $0.time > $1.time }
+
+        var inProgress: [DayEvent] = []
+        if let live = timerManager.currentInProgressSession, cal.isDateInToday(live.startTime) {
+            inProgress.append(DayEvent(
+                id: "in-progress",
+                time: live.startTime,
+                kind: .inProgressFocus(
+                    start: live.startTime,
+                    elapsedMinutes: live.durationMinutes,
+                    label: live.label
+                )
+            ))
+        }
+
+        return (inProgress + focus + breaks + problems).sorted { $0.time > $1.time }
     }
 
     private var todayProblemCount: Int {
@@ -86,7 +106,7 @@ struct DashboardView: View {
             Divider()
             rightPanel
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .glassChrome()
         .frame(minWidth: 640, minHeight: 440)
         .sheet(item: $editingEvent) { event in
             EventEditSheet(
@@ -294,7 +314,7 @@ struct DashboardView: View {
             .padding(.top, 4)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - 14-day chart
@@ -338,7 +358,7 @@ struct DashboardView: View {
             .frame(height: 68)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - Focus split
@@ -390,7 +410,7 @@ struct DashboardView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - Insights
@@ -417,7 +437,7 @@ struct DashboardView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
         .frame(maxWidth: .infinity)
     }
 
@@ -451,7 +471,7 @@ struct DashboardView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
         .frame(maxWidth: .infinity)
     }
 
@@ -466,7 +486,7 @@ struct DashboardView: View {
                   icon: "trophy.fill", iconColor: Color(red: 1, green: 0.75, blue: 0.2))
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.04)))
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - Helpers
@@ -542,6 +562,22 @@ struct DashboardView: View {
     }
 }
 
+// MARK: - Pulsing dot for in-progress events
+
+private struct PulsingDot: View {
+    let color: Color
+    @State private var on = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+            .opacity(on ? 0.3 : 1.0)
+            .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: on)
+            .onAppear { on = true }
+    }
+}
+
 // MARK: - Today's log event row
 
 private struct EventRow: View {
@@ -555,7 +591,7 @@ private struct EventRow: View {
     private var isEditable: Bool {
         switch event.kind {
         case .focus, .problem: return true
-        case .breakSession: return false
+        case .breakSession, .inProgressFocus: return false
         }
     }
 
@@ -571,6 +607,7 @@ private struct EventRow: View {
             case .focus(let s):       focusRow(s)
             case .breakSession(let s): breakRow(s)
             case .problem(let p):     problemRow(p)
+            case .inProgressFocus(_, let mins, let label): inProgressRow(mins: mins, label: label)
             }
 
             if isHovered && isEditable {
@@ -591,6 +628,26 @@ private struct EventRow: View {
     private var timeStr: String {
         let f = DateFormatter(); f.dateFormat = "h:mm"
         return f.string(from: event.time)
+    }
+
+    private func inProgressRow(mins: Double, label: String?) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(red)
+                .frame(width: 3, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text(label.flatMap { $0.isEmpty ? nil : $0 } ?? "Focus")
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    PulsingDot(color: red)
+                }
+                Text(fmtMins(mins) + " · in progress")
+                    .font(.system(size: 10))
+                    .foregroundStyle(red.opacity(0.8))
+            }
+            Spacer()
+        }
     }
 
     private func focusRow(_ s: WorkSession) -> some View {
@@ -686,6 +743,7 @@ private struct EventEditSheet: View {
                 case .focus(let s):        sessionFields(s)
                 case .problem(let p):      problemFields(p)
                 case .breakSession:        EmptyView()
+                case .inProgressFocus:     EmptyView()
                 }
             }
             .padding(16)
@@ -700,7 +758,7 @@ private struct EventEditSheet: View {
             case .problem(let p):
                 selectedConfidence = p.confidence
                 selectedDifficulty = p.difficulty
-            case .breakSession:
+            case .breakSession, .inProgressFocus:
                 break
             }
         }

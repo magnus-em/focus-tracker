@@ -64,7 +64,8 @@ struct FocusApp: App {
                         sessionStore: sessionStore,
                         problemStore: problemStore,
                         settings: settings,
-                        dayStore: dayStore
+                        dayStore: dayStore,
+                        timerManager: timerManager
                     )
                 }
             )
@@ -157,7 +158,7 @@ struct PopoverContent: View {
             }
         }
         .frame(width: 300)
-        .background(Color(NSColor.windowBackgroundColor))
+        .glassChrome()
         .onAppear {
             if dayStore.isDayStarted && settings.needsCommitmentToday {
                 showCommitment = true

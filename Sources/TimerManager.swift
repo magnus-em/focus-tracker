@@ -68,6 +68,22 @@ class TimerManager: ObservableObject {
         isRunning ? timeString : "⏸ \(timeString)"
     }
 
+    var currentElapsedSeconds: TimeInterval {
+        var elapsed = elapsedBeforePause
+        if let resume = lastResumeTime { elapsed += Date().timeIntervalSince(resume) }
+        return elapsed
+    }
+
+    var currentInProgressSession: WorkSession? {
+        guard isActive, currentPhase == .work, let start = sessionStartTime else { return nil }
+        return WorkSession(
+            startTime: start,
+            durationMinutes: currentElapsedSeconds / 60.0,
+            type: .work,
+            label: currentLabel.isEmpty ? nil : currentLabel
+        )
+    }
+
     // MARK: - Controls
 
     func start() {
