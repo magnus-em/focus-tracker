@@ -1,17 +1,32 @@
 import SwiftUI
 import AppKit
 
+enum CompletionAction { case keepGoing, takeBreak, timedOut }
+
 class CompletionPanel {
     private var panel: NSPanel?
+    private var timeoutWork: DispatchWorkItem?
 
-    func show(label: String?) {
+    func show(label: String?, onAction: @escaping (CompletionAction) -> Void) {
         dismiss()
-        let hosting = NSHostingView(rootView: CompletionToast(label: label, onDismiss: { [weak self] in
-            self?.dismiss()
-        }))
+
+        // Guard so onAction fires at most once
+        var fired = false
+        let once: (CompletionAction) -> Void = { action in
+            guard !fired else { return }
+            fired = true
+            onAction(action)
+        }
+
+        let hosting = NSHostingView(rootView: CompletionToast(
+            label: label,
+            onKeepGoing: { [weak self] in self?.dismiss(); once(.keepGoing) },
+            onTakeBreak: { [weak self] in self?.dismiss(); once(.takeBreak) }
+        ))
         hosting.autoresizingMask = [.width, .height]
+
         let p = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 64),
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 104),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered, defer: false
         )
@@ -27,12 +42,18 @@ class CompletionPanel {
         if let screen = NSScreen.main {
             p.setFrameOrigin(NSPoint(x: p.frame.origin.x, y: screen.frame.height * 0.82))
         }
-        p.makeKeyAndOrderFront(nil)
+        // orderFront (not makeKeyAndOrderFront) so the MenuBarExtra popover stays open
+        p.orderFront(nil)
         panel = p
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.dismiss() }
+
+        let work = DispatchWorkItem { [weak self] in self?.dismiss(); once(.timedOut) }
+        timeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9.0, execute: work)
     }
 
     func dismiss() {
+        timeoutWork?.cancel()
+        timeoutWork = nil
         panel?.close()
         panel = nil
     }
@@ -40,29 +61,56 @@ class CompletionPanel {
 
 private struct CompletionToast: View {
     let label: String?
-    let onDismiss: () -> Void
+    let onKeepGoing: () -> Void
+    let onTakeBreak: () -> Void
+
+    private let red  = Color(red: 0.96, green: 0.36, blue: 0.36)
+    private let blue = Color(red: 0.27, green: 0.62, blue: 0.83)
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 20))
-                .foregroundStyle(Color(red: 0.25, green: 0.72, blue: 0.53))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Session complete")
-                    .font(.system(size: 13, weight: .semibold))
-                if let label, !label.isEmpty {
-                    Text(label)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color(red: 0.25, green: 0.72, blue: 0.53))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Session complete")
+                        .font(.system(size: 13, weight: .semibold))
+                    if let label, !label.isEmpty {
+                        Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
+                Spacer()
             }
-            Spacer()
+
+            HStack(spacing: 8) {
+                Button(action: onKeepGoing) {
+                    Text("Keep Going")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(red.opacity(0.12))
+                        .foregroundStyle(red)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button(action: onTakeBreak) {
+                    Text("Take a Break")
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(blue.opacity(0.10))
+                        .foregroundStyle(blue)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .background(.ultraThinMaterial)
         .cornerRadius(14)
         .shadow(color: .black.opacity(0.15), radius: 16, x: 0, y: 6)
-        .onTapGesture { onDismiss() }
     }
 }

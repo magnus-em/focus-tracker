@@ -307,22 +307,47 @@ class TimerManager: ObservableObject {
         if settings?.soundEnabled ?? true { NSSound(named: "Glass")?.play() }
 
         if currentPhase == .work {
+            let capturedDuration = totalTime   // "Keep Going" reuses the same length
             lastCompletedLabel = currentLabel.isEmpty ? nil : currentLabel
-            completionPanel.show(label: lastCompletedLabel)
             currentLabel = ""
             workSessionsCompleted += 1
-            sendNotification(breakStarting: settings?.autoBreakEnabled ?? true)
-            if settings?.autoBreakEnabled ?? true {
-                currentPhase = .shortBreak
-                totalTime = breakDuration
-                timeRemaining = totalTime
-                updateBlocking()
-                start()
-            } else {
-                currentPhase = .work
-                setTimeForCurrentPhase()
-                updateBlocking()
+            sendNotification(breakStarting: false)
+
+            completionPanel.show(label: lastCompletedLabel) { [weak self] action in
+                guard let self else { return }
+                switch action {
+                case .keepGoing:
+                    self.currentPhase = .work
+                    self.totalTime = capturedDuration
+                    self.timeRemaining = capturedDuration
+                    self.updateBlocking()
+                    self.start()
+                case .takeBreak:
+                    self.currentPhase = .shortBreak
+                    self.totalTime = self.breakDuration
+                    self.timeRemaining = self.breakDuration
+                    self.updateBlocking()
+                    self.start()
+                case .timedOut:
+                    // Only auto-start break on timeout if the user has that setting on
+                    if self.settings?.autoBreakEnabled ?? false {
+                        self.currentPhase = .shortBreak
+                        self.totalTime = self.breakDuration
+                        self.timeRemaining = self.breakDuration
+                        self.updateBlocking()
+                        self.start()
+                    } else {
+                        self.currentPhase = .work
+                        self.setTimeForCurrentPhase()
+                        self.updateBlocking()
+                    }
+                }
             }
+
+            // While panel is visible the timer sits idle in work state
+            currentPhase = .work
+            setTimeForCurrentPhase()
+            updateBlocking()
         } else {
             currentLabel = ""
             currentPhase = .work

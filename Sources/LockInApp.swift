@@ -93,6 +93,8 @@ struct PopoverContent: View {
 
     @State private var selectedTab = 0
     @State private var showCommitment = false
+    // Prevents onAppear re-triggering commitment (and microphone requests) after each session end
+    @AppStorage("lastCommitmentPromptDay") private var lastCommitmentPromptDay: Double = 0
 
     var body: some View {
         popoverBody
@@ -100,7 +102,12 @@ struct PopoverContent: View {
             .frame(width: 300)
             .popoverBackground()
             .onAppear {
-                if dayStore.isDayStarted && settings.needsCommitmentToday {
+                // Only prompt once per calendar day — prevents the microphone dialog
+                // from reappearing every time the popover reopens after a session ends.
+                let todayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+                if dayStore.isDayStarted && settings.needsCommitmentToday
+                    && lastCommitmentPromptDay < todayStart {
+                    lastCommitmentPromptDay = todayStart
                     showCommitment = true
                 }
             }
