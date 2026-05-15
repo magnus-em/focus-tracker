@@ -119,45 +119,7 @@ struct TimerView: View {
                 }
             }
 
-            if timer.isActive && !timer.isOnBreak {
-                glassChipGroup {
-                    HStack(spacing: 6) {
-                        ForEach([-10, -5, 5, 10], id: \.self) { delta in
-                            Button(delta > 0 ? "+\(delta)m" : "\(delta)m") {
-                                timer.adjustDuration(by: Double(delta))
-                            }
-                            .font(.system(size: 11, weight: .medium))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
-                            .foregroundStyle(delta > 0 ? phaseColor : Color.secondary)
-                            .glassChip()
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-
-            if !timer.isActive && !timer.isOnBreak {
-                if showBreakPicker {
-                    inlineBreakPicker
-                } else {
-                    Button {
-                        showBreakPicker = true
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "cup.and.saucer")
-                                .font(.system(size: 10))
-                            Text("Take a Break")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 5)
-                        .glassChip()
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+            takeBreakSection
 
             Divider().padding(.horizontal, 8)
 
@@ -233,6 +195,36 @@ struct TimerView: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 20)
+    }
+
+    @ViewBuilder
+    private var takeBreakSection: some View {
+        if !timer.isOnBreak {
+            if showBreakPicker {
+                inlineBreakPicker
+            } else {
+                Button {
+                    showBreakPicker = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "cup.and.saucer")
+                            .font(.system(size: 10))
+                        Text("Take a Break")
+                            .font(.system(size: 11, weight: .medium))
+                        if timer.isActive {
+                            Text("· ends session")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 5)
+                    .glassChip()
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     @ViewBuilder

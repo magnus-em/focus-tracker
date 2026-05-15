@@ -35,6 +35,7 @@ private struct DayEvent: Identifiable {
         case breakSession(WorkSession)
         case problem(ProblemEntry)
         case inProgressFocus(start: Date, elapsedMinutes: Double, label: String?)
+        case inProgressBreak(start: Date, elapsedMinutes: Double)
     }
     let id: String
     let time: Date
@@ -89,6 +90,16 @@ struct DashboardView: View {
                     start: live.startTime,
                     elapsedMinutes: live.durationMinutes,
                     label: live.label
+                )
+            ))
+        }
+        if let liveBreak = timerManager.currentInProgressBreak, cal.isDateInToday(liveBreak.startTime) {
+            inProgress.append(DayEvent(
+                id: "in-progress-break",
+                time: liveBreak.startTime,
+                kind: .inProgressBreak(
+                    start: liveBreak.startTime,
+                    elapsedMinutes: liveBreak.durationMinutes
                 )
             ))
         }
@@ -591,7 +602,7 @@ private struct EventRow: View {
     private var isEditable: Bool {
         switch event.kind {
         case .focus, .problem: return true
-        case .breakSession, .inProgressFocus: return false
+        case .breakSession, .inProgressFocus, .inProgressBreak: return false
         }
     }
 
@@ -608,6 +619,7 @@ private struct EventRow: View {
             case .breakSession(let s): breakRow(s)
             case .problem(let p):     problemRow(p)
             case .inProgressFocus(_, let mins, let label): inProgressRow(mins: mins, label: label)
+            case .inProgressBreak(_, let mins): inProgressBreakRow(mins: mins)
             }
 
             if isHovered && isEditable {
@@ -647,6 +659,30 @@ private struct EventRow: View {
                     .foregroundStyle(red.opacity(0.8))
             }
             Spacer()
+        }
+    }
+
+    private func inProgressBreakRow(mins: Double) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(blue)
+                .frame(width: 3, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text("Break")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(blue)
+                        .lineLimit(1)
+                    PulsingDot(color: blue)
+                }
+                Text(fmtMins(mins) + " · in progress")
+                    .font(.system(size: 10))
+                    .foregroundStyle(blue.opacity(0.8))
+            }
+            Spacer()
+            Image(systemName: "cup.and.saucer")
+                .font(.system(size: 10))
+                .foregroundStyle(blue.opacity(0.4))
         }
     }
 
@@ -744,6 +780,7 @@ private struct EventEditSheet: View {
                 case .problem(let p):      problemFields(p)
                 case .breakSession:        EmptyView()
                 case .inProgressFocus:     EmptyView()
+                case .inProgressBreak:     EmptyView()
                 }
             }
             .padding(16)
@@ -758,7 +795,7 @@ private struct EventEditSheet: View {
             case .problem(let p):
                 selectedConfidence = p.confidence
                 selectedDifficulty = p.difficulty
-            case .breakSession, .inProgressFocus:
+            case .breakSession, .inProgressFocus, .inProgressBreak:
                 break
             }
         }

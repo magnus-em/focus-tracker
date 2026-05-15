@@ -84,6 +84,16 @@ class TimerManager: ObservableObject {
         )
     }
 
+    var currentInProgressBreak: WorkSession? {
+        guard isActive, isOnBreak, let start = sessionStartTime else { return nil }
+        return WorkSession(
+            startTime: start,
+            durationMinutes: currentElapsedSeconds / 60.0,
+            type: .shortBreak,
+            label: nil
+        )
+    }
+
     // MARK: - Controls
 
     func start() {
@@ -161,7 +171,7 @@ class TimerManager: ObservableObject {
                 startTime: start, durationMinutes: elapsed / 60.0,
                 type: .work, label: currentLabel.isEmpty ? nil : currentLabel
             ))
-        } else if isOnBreak, elapsed >= 300, let start = sessionStartTime {
+        } else if isOnBreak, elapsed >= 60, let start = sessionStartTime {
             sessionStore?.addSession(WorkSession(
                 startTime: start, durationMinutes: elapsed / 60.0, type: .shortBreak, label: nil
             ))
