@@ -126,10 +126,15 @@ class TimerManager: ObservableObject {
         timer = nil
         isRunning = false
 
-        if elapsed >= 60, currentPhase == .work, let start = sessionStartTime {
+        if currentPhase == .work, elapsed >= 60, let start = sessionStartTime {
             sessionStore?.addSession(WorkSession(
                 startTime: start, durationMinutes: elapsed / 60.0,
                 type: .work, label: currentLabel.isEmpty ? nil : currentLabel
+            ))
+        } else if isOnBreak, elapsed >= 60, let start = sessionStartTime {
+            sessionStore?.addSession(WorkSession(
+                startTime: start, durationMinutes: elapsed / 60.0,
+                type: .shortBreak, label: nil
             ))
         }
 
@@ -408,6 +413,12 @@ class TimerManager: ObservableObject {
 
     private func clearCheckpoint() {
         UserDefaults.standard.removeObject(forKey: Self.checkpointKey)
+    }
+
+    func saveOnQuit() {
+        // Ensure the latest timer state is in UserDefaults before the process exits.
+        // recoverPartialSession() will pick this up on the next launch.
+        saveCheckpoint()
     }
 
     func recoverPartialSession(into store: SessionStore) {

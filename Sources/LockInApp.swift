@@ -45,6 +45,7 @@ struct FocusApp: App {
             object: nil,
             queue: .main
         ) { _ in
+            timer.saveOnQuit()
             if SiteBlocker.hasStaleEntries() { SiteBlocker.unblockAll() }
         }
     }
@@ -94,17 +95,40 @@ struct PopoverContent: View {
     @State private var showCommitment = false
 
     var body: some View {
+        popoverBody
+            .background(.clear)
+            .frame(width: 300)
+            .popoverBackground()
+            .onAppear {
+                if dayStore.isDayStarted && settings.needsCommitmentToday {
+                    showCommitment = true
+                }
+            }
+    }
+
+    private func tabChipButton(icon: String, tag: Int) -> some View {
+        let selected = selectedTab == tag
+        return Button { selectedTab = tag } label: {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                .frame(width: 44, height: 30)
+                .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(Color.secondary))
+        }
+        .buttonStyle(.plain)
+        .glassTabChip(selected: selected)
+    }
+
+    private var popoverBody: some View {
         ZStack {
             VStack(spacing: 0) {
-                Picker("", selection: $selectedTab) {
-                    Image(systemName: "timer").tag(0)
-                    Image(systemName: "chart.bar.fill").tag(1)
-                    Image(systemName: "checklist").tag(2)
-                    Image(systemName: "brain.head.profile").tag(3)
-                    Image(systemName: "gearshape.fill").tag(4)
+                HStack(spacing: 4) {
+                    tabChipButton(icon: "timer", tag: 0)
+                    tabChipButton(icon: "chart.bar.fill", tag: 1)
+                    tabChipButton(icon: "checklist", tag: 2)
+                    tabChipButton(icon: "brain.head.profile", tag: 3)
+                    tabChipButton(icon: "gearshape.fill", tag: 4)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
                 .padding(.top, 10)
                 .padding(.bottom, 2)
 
@@ -120,7 +144,7 @@ struct PopoverContent: View {
                     default: SettingsView(settings: settings, timer: timerManager, store: sessionStore)
                     }
                 }
-                .frame(height: 430)
+                .frame(height: 480)
 
                 Divider()
 
@@ -155,13 +179,6 @@ struct PopoverContent: View {
                 CommitmentView(settings: settings, oathStore: commitmentStore, isShowing: $showCommitment)
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
                     .zIndex(10)
-            }
-        }
-        .frame(width: 300)
-        .glassChrome()
-        .onAppear {
-            if dayStore.isDayStarted && settings.needsCommitmentToday {
-                showCommitment = true
             }
         }
     }
