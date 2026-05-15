@@ -8,6 +8,7 @@ struct TimerView: View {
     @Binding var showCommitment: Bool
 
     @State private var showBreakPicker = false
+    @State private var customBreakMinutes: Double = 30
 
     private var phaseColor: Color {
         switch timer.currentPhase {
@@ -32,7 +33,7 @@ struct TimerView: View {
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity)
                 } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
+                    glassChipGroup {
                         HStack(spacing: 6) {
                             ForEach(settings.tags, id: \.self) { tag in
                                 let selected = timer.currentLabel == tag
@@ -40,13 +41,11 @@ struct TimerView: View {
                                     .font(.system(size: 11, weight: .medium))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 5)
-                                    .background(selected ? phaseColor.opacity(0.18) : Color.secondary.opacity(0.08))
                                     .foregroundStyle(selected ? phaseColor : Color.secondary)
-                                    .clipShape(Capsule())
+                                    .glassChip()
                                     .buttonStyle(.plain)
                             }
                         }
-                        .padding(.horizontal, 1)
                     }
                 }
             }
@@ -60,17 +59,18 @@ struct TimerView: View {
             }
 
             if !timer.isActive && !timer.isOnBreak {
-                HStack(spacing: 6) {
-                    ForEach([15, 25, 45, 60], id: \.self) { mins in
-                        let selected = Int(timer.totalTime / 60) == mins
-                        Button("\(mins)m") { timer.setSessionDuration(Double(mins)) }
-                            .font(.system(size: 11, weight: .medium))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
-                            .background(selected ? phaseColor.opacity(0.18) : Color.secondary.opacity(0.07))
-                            .foregroundStyle(selected ? phaseColor : Color.secondary)
-                            .clipShape(Capsule())
-                            .buttonStyle(.plain)
+                glassChipGroup {
+                    HStack(spacing: 6) {
+                        ForEach([15, 25, 45, 60], id: \.self) { mins in
+                            let selected = Int(timer.totalTime / 60) == mins
+                            Button("\(mins)m") { timer.setSessionDuration(Double(mins)) }
+                                .font(.system(size: 11, weight: .medium))
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .foregroundStyle(selected ? phaseColor : Color.secondary)
+                                .glassChip()
+                                .buttonStyle(.plain)
+                        }
                     }
                 }
             }
@@ -101,74 +101,60 @@ struct TimerView: View {
             }
 
             HStack(spacing: 12) {
-                Button {
-                    timer.reset()
-                } label: {
-                    Image(systemName: timer.isActive ? "stop.fill" : "arrow.counterclockwise")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .background(Color.secondary.opacity(0.08))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help(timer.isActive ? "End session (saves progress)" : "Reset timer")
+                controlSecondaryButton(
+                    systemImage: timer.isActive ? "stop.fill" : "arrow.counterclockwise",
+                    help: timer.isActive ? "End session (saves progress)" : "Reset timer"
+                ) { timer.reset() }
 
-                Button {
-                    timer.isRunning ? timer.pause() : timer.start()
-                } label: {
-                    Image(systemName: timer.isRunning ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(phaseColor)
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
+                controlPrimaryButton(
+                    systemImage: timer.isRunning ? "pause.fill" : "play.fill",
+                    tint: phaseColor
+                ) { timer.isRunning ? timer.pause() : timer.start() }
 
-                Button(action: timer.skip) {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .background(Color.secondary.opacity(0.08))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
+                controlSecondaryButton(
+                    systemImage: "forward.fill",
+                    help: "Skip"
+                ) { timer.skip() }
             }
 
             if timer.isActive && !timer.isOnBreak {
-                HStack(spacing: 6) {
-                    ForEach([-10, -5, 5, 10], id: \.self) { delta in
-                        Button(delta > 0 ? "+\(delta)m" : "\(delta)m") {
-                            timer.adjustDuration(by: Double(delta))
+                glassChipGroup {
+                    HStack(spacing: 6) {
+                        ForEach([-10, -5, 5, 10], id: \.self) { delta in
+                            Button(delta > 0 ? "+\(delta)m" : "\(delta)m") {
+                                timer.adjustDuration(by: Double(delta))
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(delta > 0 ? phaseColor : Color.secondary)
+                            .glassChip()
+                            .buttonStyle(.plain)
                         }
-                        .font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.secondary.opacity(0.07))
-                        .foregroundStyle(delta > 0 ? phaseColor : Color.secondary)
-                        .clipShape(Capsule())
-                        .buttonStyle(.plain)
                     }
                 }
             }
 
             if !timer.isActive && !timer.isOnBreak {
-                Button {
-                    showBreakPicker = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "cup.and.saucer")
-                            .font(.system(size: 10))
-                        Text("Take a Break")
-                            .font(.system(size: 11, weight: .medium))
+                if showBreakPicker {
+                    inlineBreakPicker
+                } else {
+                    Button {
+                        showBreakPicker = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "cup.and.saucer")
+                                .font(.system(size: 10))
+                            Text("Take a Break")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 5)
+                        .glassChip()
                     }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
-                    .background(Color.secondary.opacity(0.07))
-                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
             Divider().padding(.horizontal, 8)
@@ -186,7 +172,7 @@ struct TimerView: View {
                             .tracking(0.6)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text(String(format: "%.1f / %dh", hoursToday, settings.dailyGoal))
+                        Text(String(format: "%.1fh / %dh", hoursToday, settings.dailyGoal))
                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundStyle(goalMet ? Color.green : .primary)
                             .contentTransition(.numericText())
@@ -245,63 +231,199 @@ struct TimerView: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 20)
-        .sheet(isPresented: $showBreakPicker) {
-            BreakPickerSheet { minutes in
-                timer.startManualBreak(minutes: minutes)
+    }
+
+    @ViewBuilder
+    private var inlineBreakPicker: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Take a Break")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    showBreakPicker = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
             }
+
+            glassChipGroup {
+                HStack(spacing: 6) {
+                    ForEach([30.0, 60.0, 120.0], id: \.self) { mins in
+                        let label = mins < 60 ? "\(Int(mins))m" : "\(Int(mins / 60))h"
+                        Button(label) {
+                            showBreakPicker = false
+                            timer.startManualBreak(minutes: mins)
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .foregroundStyle(Color(red: 0.27, green: 0.62, blue: 0.83))
+                        .glassChip()
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    customBreakMinutes = max(5, customBreakMinutes - 5)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 26, height: 24)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+
+                Text("\(Int(customBreakMinutes)) min")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .frame(minWidth: 54)
+
+                Button {
+                    customBreakMinutes = min(480, customBreakMinutes + 5)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 26, height: 24)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button("Start") {
+                    let mins = customBreakMinutes
+                    showBreakPicker = false
+                    timer.startManualBreak(minutes: mins)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .foregroundStyle(Color(red: 0.27, green: 0.62, blue: 0.83))
+                .glassChip()
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    private func controlPrimaryButton(systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
+        if #available(macOS 26.0, *) {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 48, height: 48)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(tint)
+            .clipShape(Circle())
+        } else {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .background(tint)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func controlSecondaryButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        if #available(macOS 26.0, *) {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.glass)
+            .clipShape(Circle())
+            .help(help)
+        } else {
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(help)
         }
     }
 
     @ViewBuilder
     private var dayStatusRow: some View {
-        if dayStore.isDayEnded {
-            HStack {
-                Image(systemName: "moon.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                Text("Day ended")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                Spacer()
-            }
-        } else if dayStore.isDayStarted {
-            HStack {
-                if let start = dayStore.todayRecord?.dayStart {
-                    Text("Since \(clockStr(start))")
+        Group {
+            if dayStore.isDayEnded {
+                HStack(spacing: 4) {
+                    Image(systemName: "moon.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Text("Day ended")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
+                    Spacer()
                 }
-                Spacer()
-                Button("End Day") { dayStore.endDay() }
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+            } else if dayStore.isDayStarted {
+                HStack {
+                    if let start = dayStore.todayRecord?.dayStart {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sunrise.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                            Text("Since \(clockStr(start))")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    Spacer()
+                    Button("End Day") { dayStore.endDay() }
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(Capsule())
+                        .buttonStyle(.plain)
+                }
+            } else {
+                HStack {
+                    Spacer()
+                    Button {
+                        dayStore.startDay()
+                        if settings.commitmentEnabled && settings.needsCommitmentToday {
+                            showCommitment = true
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "sunrise.fill")
+                                .font(.system(size: 10))
+                            Text("Start Day")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundStyle(phaseColor)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 5)
+                        .background(phaseColor.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
                     .buttonStyle(.plain)
-            }
-        } else {
-            HStack {
-                Spacer()
-                Button {
-                    dayStore.startDay()
-                    if settings.commitmentEnabled && settings.needsCommitmentToday {
-                        showCommitment = true
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "sunrise.fill")
-                            .font(.system(size: 10))
-                        Text("Start Day")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundStyle(phaseColor)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
-                    .background(phaseColor.opacity(0.1))
-                    .clipShape(Capsule())
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                Spacer()
             }
         }
+        .padding(.bottom, 4)
     }
 
     private func formatMinutes(_ minutes: Double) -> String {
@@ -314,74 +436,3 @@ struct TimerView: View {
     }
 }
 
-private struct BreakPickerSheet: View {
-    let onSelect: (Double) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var showCustom = false
-    @State private var customMinutes: Double = 30
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Take a Break")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            VStack(spacing: 8) {
-                ForEach([(30.0, "30 minutes"), (60.0, "1 hour"), (120.0, "2 hours")], id: \.0) { mins, label in
-                    Button {
-                        onSelect(mins)
-                        dismiss()
-                    } label: {
-                        Text(label)
-                            .font(.system(size: 13, weight: .medium))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.secondary.opacity(0.08))
-                            .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                if showCustom {
-                    VStack(spacing: 8) {
-                        HStack {
-                            Text("\(Int(customMinutes)) min")
-                                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                .frame(width: 70)
-                            Stepper("", value: $customMinutes, in: 5...480, step: 5)
-                                .labelsHidden()
-                        }
-                        Button {
-                            onSelect(customMinutes)
-                            dismiss()
-                        } label: {
-                            Text("Start \(Int(customMinutes)) min break")
-                                .font(.system(size: 13, weight: .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.12))
-                                .foregroundStyle(Color(red: 0.27, green: 0.62, blue: 0.83))
-                                .cornerRadius(8)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                } else {
-                    Button("Custom…") { showCustom = true }
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(20)
-        .frame(width: 240)
-    }
-}
