@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+if [ -d /Applications/Xcode.app ]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+
 echo "Building Focus..."
 swift build -c release
 

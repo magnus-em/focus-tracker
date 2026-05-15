@@ -100,21 +100,23 @@ struct TimerView: View {
                 }
             }
 
-            HStack(spacing: 12) {
-                controlSecondaryButton(
-                    systemImage: timer.isActive ? "stop.fill" : "arrow.counterclockwise",
-                    help: timer.isActive ? "End session (saves progress)" : "Reset timer"
-                ) { timer.reset() }
+            glassChipGroup {
+                HStack(spacing: 12) {
+                    controlSecondaryButton(
+                        systemImage: timer.isActive ? "stop.fill" : "arrow.counterclockwise",
+                        help: timer.isActive ? "End session (saves progress)" : "Reset timer"
+                    ) { timer.reset() }
 
-                controlPrimaryButton(
-                    systemImage: timer.isRunning ? "pause.fill" : "play.fill",
-                    tint: phaseColor
-                ) { timer.isRunning ? timer.pause() : timer.start() }
+                    controlPrimaryButton(
+                        systemImage: timer.isRunning ? "pause.fill" : "play.fill",
+                        tint: phaseColor
+                    ) { timer.isRunning ? timer.pause() : timer.start() }
 
-                controlSecondaryButton(
-                    systemImage: "forward.fill",
-                    help: "Skip"
-                ) { timer.skip() }
+                    controlSecondaryButton(
+                        systemImage: "forward.fill",
+                        help: "Skip"
+                    ) { timer.skip() }
+                }
             }
 
             if timer.isActive && !timer.isOnBreak {
@@ -276,10 +278,9 @@ struct TimerView: View {
                     Image(systemName: "minus")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 26, height: 24)
-                        .background(Color.secondary.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
+                .glassChip(in: RoundedRectangle(cornerRadius: 6))
 
                 Text("\(Int(customBreakMinutes)) min")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -291,10 +292,9 @@ struct TimerView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .semibold))
                         .frame(width: 26, height: 24)
-                        .background(Color.secondary.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
+                .glassChip(in: RoundedRectangle(cornerRadius: 6))
 
                 Spacer()
 
@@ -320,11 +320,11 @@ struct TimerView: View {
             Button(action: action) {
                 Image(systemName: systemImage)
                     .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
             }
-            .buttonStyle(.glassProminent)
-            .tint(tint)
-            .clipShape(Circle())
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive().tint(tint), in: Circle())
         } else {
             Button(action: action) {
                 Image(systemName: systemImage)
@@ -346,8 +346,8 @@ struct TimerView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 34, height: 34)
             }
-            .buttonStyle(.glass)
-            .clipShape(Circle())
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: Circle())
             .help(help)
         } else {
             Button(action: action) {
@@ -393,8 +393,7 @@ struct TimerView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.08))
-                        .clipShape(Capsule())
+                        .glassChip()
                         .buttonStyle(.plain)
                 }
             } else {
