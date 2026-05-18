@@ -179,10 +179,20 @@ struct TimerScreen: View {
     private var ringPanel: some View {
         PadCard(padding: 22) {
             VStack(spacing: 16) {
-                Text(engine.phase.displayName.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(engine.phase == .work ? FocusColors.focusRed : FocusColors.breakBlue)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(engine.isRunning ? FocusColors.goalGreen : Color.gray.opacity(0.4))
+                        .frame(width: 8, height: 8)
+                    Text(engine.phase.displayName.uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(1.4)
+                        .foregroundStyle(engine.phase == .work ? FocusColors.focusRed : FocusColors.breakBlue)
+                    if engine.isActive && !engine.isRunning {
+                        Text("PAUSED")
+                            .font(.system(size: 11, weight: .bold)).tracking(1.4)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 ZStack {
                     let ring = RingsView.Ring(
@@ -203,6 +213,11 @@ struct TimerScreen: View {
                         if let label = engine.currentLabel.isEmpty ? nil : engine.currentLabel {
                             Text(label).font(.callout).foregroundStyle(.secondary)
                         }
+                        if engine.isActive {
+                            Text("Elapsed \(elapsedString)")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                                .monospacedDigit()
+                        }
                     }
                 }
 
@@ -211,10 +226,25 @@ struct TimerScreen: View {
                 }
                 if engine.isActive {
                     adjustChips
+                    Text(engine.elapsedSeconds >= 60
+                         ? "Stop will save \(Int(engine.elapsedSeconds / 60)) min."
+                         : "Stops under 1 min are discarded.")
+                        .font(.caption2).foregroundStyle(.tertiary)
                 }
             }
             .frame(maxWidth: .infinity)
         }
+    }
+
+    private var elapsedString: String {
+        let s = Int(engine.elapsedSeconds)
+        return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    private var stopButtonLabel: String {
+        if engine.phase == .breakPhase { return "Skip" }
+        if engine.elapsedSeconds >= 60 { return "Stop & Save" }
+        return "Stop"
     }
 
     private var presetChips: some View {
@@ -303,7 +333,7 @@ struct TimerScreen: View {
                     Haptics.warning()
                     if engine.phase == .breakPhase { engine.skip() } else { engine.stop() }
                 } label: {
-                    Label(engine.phase == .breakPhase ? "Skip" : "Stop",
+                    Label(stopButtonLabel,
                           systemImage: engine.phase == .breakPhase ? "forward.fill" : "stop.fill")
                         .font(.system(size: 17, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -415,8 +445,9 @@ struct TimerScreen: View {
 
     // MARK: - Day actions
 
+    @Environment(\.modelContext) private var ctx
+
     private func startDay() {
-        let ctx = ModelContext(engineContainer)
         let today = Calendar.current.startOfDay(for: Date())
         let existing = (try? ctx.fetch(FetchDescriptor<StoredDayRecord>(
             predicate: #Predicate { $0.calendarDay == today }
@@ -430,30 +461,22 @@ struct TimerScreen: View {
             ctx.insert(rec)
         }
         try? ctx.save()
+        Haptics.success()
         if settings.commitmentEnabled && settings.needsCommitmentToday {
             showCommitment = true
         }
     }
 
     private func endDay() {
-        let ctx = ModelContext(engineContainer)
         let today = Calendar.current.startOfDay(for: Date())
         if let rec = (try? ctx.fetch(FetchDescriptor<StoredDayRecord>(
             predicate: #Predicate { $0.calendarDay == today }
         )))?.first {
             rec.dayEnd = Date()
             try? ctx.save()
+            Haptics.success()
         }
     }
-
-    private var engineContainer: ModelContainer {
-        // Pull the same container through the SwiftData environment via modelContext.
-        // We use a workaround: re-read via the environment in this view.
-        engineContainerFromEnvironment
-    }
-
-    @Environment(\.modelContext) private var contextEnv
-    private var engineContainerFromEnvironment: ModelContainer { contextEnv.container }
 }
 
 // MARK: - Break sheet

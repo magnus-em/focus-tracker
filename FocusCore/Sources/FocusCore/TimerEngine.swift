@@ -65,7 +65,11 @@ public final class FocusTimerEngine: ObservableObject {
     // MARK: - Private state
 
     private let container: ModelContainer
-    private var context: ModelContext { ModelContext(container) }
+    /// Use the main context so inserts immediately trigger `@Query` updates
+    /// in SwiftUI views. Creating a fresh ModelContext per save would commit
+    /// to the same store but the view layer's context wouldn't always
+    /// refresh in time.
+    private var context: ModelContext { container.mainContext }
     private var ticker: AnyCancellable?
     private var sessionStartTime: Date?
     private var elapsedBeforePause: TimeInterval = 0

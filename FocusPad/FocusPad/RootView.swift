@@ -1,8 +1,6 @@
 import SwiftUI
 import FocusCore
 
-/// Sidebar destination IDs. Keeping these as a small enum lets the sidebar
-/// double as both a NavigationSplitView selection AND a compact tab fallback.
 enum PadTab: String, Identifiable, CaseIterable, Hashable {
     case timer, overview, daylog, problems, homework, scratch
     case stats, insights, awards, settings
@@ -54,55 +52,75 @@ enum PadTab: String, Identifiable, CaseIterable, Hashable {
     }
 }
 
+/// Sidebar uses a Button-driven selection rather than `List(selection:)` tags
+/// because the tagged approach was failing to update the detail view on real
+/// hardware. Buttons set @State directly — bulletproof — and the detail closure
+/// reads that state, with `.id()` forcing a fresh NavigationStack per tab.
 struct RootView: View {
-    @State private var selection: PadTab? = .timer
-    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @State private var selection: PadTab = .timer
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView {
             sidebar
         } detail: {
             NavigationStack {
-                destination(for: selection ?? .timer)
+                destination(for: selection)
             }
+            .id(selection)
         }
         .navigationSplitViewStyle(.balanced)
         .tint(FocusColors.focusRed)
     }
 
     private var sidebar: some View {
-        List(selection: $selection) {
+        List {
             Section {
                 ForEach([PadTab.timer, .overview, .daylog]) { tab in
-                    sidebarRow(tab)
+                    sidebarButton(tab)
                 }
             }
             Section("Capture") {
                 ForEach([PadTab.problems, .homework, .scratch]) { tab in
-                    sidebarRow(tab)
+                    sidebarButton(tab)
                 }
             }
             Section("Analytics") {
                 ForEach([PadTab.stats, .insights, .awards]) { tab in
-                    sidebarRow(tab)
+                    sidebarButton(tab)
                 }
             }
             Section {
-                sidebarRow(.settings)
+                sidebarButton(.settings)
             }
         }
-        .navigationTitle("Focus")
         .listStyle(.sidebar)
+        .navigationTitle("Focus")
     }
 
-    private func sidebarRow(_ tab: PadTab) -> some View {
-        Label {
-            Text(tab.label)
-        } icon: {
-            Image(systemName: tab.symbol)
-                .foregroundStyle(tab.tint)
+    private func sidebarButton(_ tab: PadTab) -> some View {
+        Button {
+            Haptics.tap()
+            selection = tab
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: tab.symbol)
+                    .font(.system(size: 16))
+                    .foregroundStyle(tab.tint)
+                    .frame(width: 22)
+                Text(tab.label)
+                    .foregroundStyle(.primary)
+                Spacer()
+                if selection == tab {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 2)
         }
-        .tag(tab as PadTab?)
+        .buttonStyle(.plain)
+        .listRowBackground(selection == tab ? tab.tint.opacity(0.12) : Color.clear)
     }
 
     @ViewBuilder
