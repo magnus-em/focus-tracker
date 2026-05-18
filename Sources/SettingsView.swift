@@ -1,9 +1,11 @@
 import SwiftUI
+import FocusCore
 
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var timer: TimerManager
     @ObservedObject var store: SessionStore
+    var openOnboarding: (() -> Void)? = nil
     @State private var showResetConfirm = false
     @State private var newSourceText = ""
 
@@ -17,6 +19,24 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
 
+                if let openOnboarding {
+                    Button { openOnboarding() } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles").font(.system(size: 11))
+                            Text("Show welcome tour").font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(.tertiary)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 8)
+                        .background(Color.secondary.opacity(0.06))
+                        .cornerRadius(7)
+                    }
+                    .buttonStyle(.plain)
+
+                    Divider()
+                }
+
                 SectionLabel("INTERVALS")
                 IntervalRow(label: "Focus", value: $settings.workMinutes, range: 5...90, step: 5, unit: "min")
                 IntervalRow(label: "Break", value: $settings.shortBreakMinutes, range: 1...60, step: 1, unit: "min")
@@ -29,9 +49,9 @@ struct SettingsView: View {
                 Divider()
 
                 SectionLabel("COMMITMENT")
-                ToggleRow(label: "Daily commitment + voice oath", isOn: $settings.commitmentEnabled)
+                ToggleRow(label: "Daily commitment prompt", isOn: $settings.commitmentEnabled)
                 if settings.commitmentEnabled {
-                    Text("You'll be prompted each morning to write your commitment for the day and optionally record a voice oath.")
+                    Text("You'll be prompted each morning to write your commitment for the day.")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)

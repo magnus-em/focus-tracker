@@ -2,7 +2,6 @@ import SwiftUI
 
 struct CommitmentView: View {
     @ObservedObject var settings: AppSettings
-    @ObservedObject var oathStore: CommitmentStore
     @Binding var isShowing: Bool
 
     @State private var text = ""
@@ -58,56 +57,6 @@ struct CommitmentView: View {
                             .cornerRadius(9)
                         }
 
-                        // Voice oath
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 5) {
-                                Text("VOICE OATH")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .tracking(1.2)
-                                    .foregroundStyle(.secondary)
-                                Text("optional")
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(.quaternary)
-                            }
-                            HStack(spacing: 8) {
-                                Button(action: oathStore.toggleRecord) {
-                                    HStack(spacing: 5) {
-                                        Circle()
-                                            .fill(oathStore.isRecording ? Color.red : Color.secondary.opacity(0.5))
-                                            .frame(width: 7, height: 7)
-                                        Text(oathStore.isRecording ? "Stop" : (oathStore.hasRecording ? "Re-record" : "Record"))
-                                            .font(.system(size: 12, weight: .medium))
-                                    }
-                                    .foregroundStyle(oathStore.isRecording ? .red : .primary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(oathStore.isRecording ? Color.red.opacity(0.08) : Color.secondary.opacity(0.07))
-                                    .cornerRadius(7)
-                                }
-                                .buttonStyle(.plain)
-
-                                if oathStore.hasRecording && !oathStore.isRecording {
-                                    Button(action: oathStore.togglePlay) {
-                                        HStack(spacing: 5) {
-                                            Image(systemName: oathStore.isPlaying ? "pause.fill" : "play.fill")
-                                                .font(.system(size: 10))
-                                            Text(oathStore.isPlaying ? "Pause" : "Play back")
-                                                .font(.system(size: 12, weight: .medium))
-                                        }
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
-                                        .background(Color.secondary.opacity(0.07))
-                                        .cornerRadius(7)
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.green)
-                                }
-                            }
-                        }
                     }
                     .padding(18)
                 }

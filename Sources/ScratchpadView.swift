@@ -1,4 +1,5 @@
 import SwiftUI
+import FocusCore
 
 struct ScratchpadView: View {
     @ObservedObject var store: ScratchStore

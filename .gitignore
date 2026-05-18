@@ -7,3 +7,5 @@ Focus.app/
 xcuserdata/
 .DS_Store
 .claude/
+build/
+DerivedData/

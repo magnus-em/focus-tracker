@@ -1,4 +1,5 @@
 import SwiftUI
+import FocusCore
 
 struct ProblemDetailView: View {
     @ObservedObject var store: ProblemStore

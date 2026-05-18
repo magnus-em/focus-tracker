@@ -1,4 +1,5 @@
 import Foundation
+import FocusCore
 import Combine
 import UserNotifications
 import AppKit
@@ -13,6 +14,7 @@ class TimerManager: ObservableObject {
 
     @Published var currentLabel: String = ""
     @Published var lastCompletedLabel: String? = nil
+    @Published var currentBreakKinds: [BreakKind] = []
 
     @Published var pauseStartedAt: Date? = nil
     @Published var pauseRemainingSeconds: Double = 0
@@ -90,7 +92,8 @@ class TimerManager: ObservableObject {
             startTime: start,
             durationMinutes: currentElapsedSeconds / 60.0,
             type: .shortBreak,
-            label: nil
+            label: nil,
+            breakKinds: currentBreakKinds.isEmpty ? nil : currentBreakKinds
         )
     }
 
@@ -144,11 +147,13 @@ class TimerManager: ObservableObject {
         } else if isOnBreak, elapsed >= 60, let start = sessionStartTime {
             sessionStore?.addSession(WorkSession(
                 startTime: start, durationMinutes: elapsed / 60.0,
-                type: .shortBreak, label: nil
+                type: .shortBreak, label: nil,
+                breakKinds: currentBreakKinds.isEmpty ? nil : currentBreakKinds
             ))
         }
 
         currentLabel = ""
+        currentBreakKinds = []
         elapsedBeforePause = 0
         lastResumeTime = nil
         sessionStartTime = nil
@@ -173,11 +178,13 @@ class TimerManager: ObservableObject {
             ))
         } else if isOnBreak, elapsed >= 60, let start = sessionStartTime {
             sessionStore?.addSession(WorkSession(
-                startTime: start, durationMinutes: elapsed / 60.0, type: .shortBreak, label: nil
+                startTime: start, durationMinutes: elapsed / 60.0, type: .shortBreak, label: nil,
+                breakKinds: currentBreakKinds.isEmpty ? nil : currentBreakKinds
             ))
         }
 
         currentLabel = ""
+        currentBreakKinds = []
         elapsedBeforePause = 0
         lastResumeTime = nil
         sessionStartTime = nil
@@ -187,7 +194,7 @@ class TimerManager: ObservableObject {
         updateBlocking()
     }
 
-    func startManualBreak(minutes: Double) {
+    func startManualBreak(minutes: Double, kinds: [BreakKind] = []) {
         cancelPauseGrace()
         var elapsed = elapsedBeforePause
         if let resumeTime = lastResumeTime { elapsed += Date().timeIntervalSince(resumeTime) }
@@ -208,6 +215,7 @@ class TimerManager: ObservableObject {
         sessionStartTime = nil
         clearCheckpoint()
         currentPhase = .shortBreak
+        currentBreakKinds = kinds
         totalTime = minutes * 60
         timeRemaining = totalTime
         updateBlocking()
@@ -279,7 +287,6 @@ class TimerManager: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "Focus"
         content.body = "Paused too long — session ended and saved."
-        content.sound = .default
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         )
@@ -303,9 +310,11 @@ class TimerManager: ObservableObject {
 
         if let start = sessionStartTime {
             let type: WorkSession.SessionType = currentPhase == .work ? .work : .shortBreak
+            let kinds: [BreakKind]? = currentPhase == .work ? nil : (currentBreakKinds.isEmpty ? nil : currentBreakKinds)
             sessionStore?.addSession(WorkSession(
                 startTime: start, durationMinutes: totalTime / 60.0,
-                type: type, label: currentPhase == .work ? (currentLabel.isEmpty ? nil : currentLabel) : nil
+                type: type, label: currentPhase == .work ? (currentLabel.isEmpty ? nil : currentLabel) : nil,
+                breakKinds: kinds
             ))
         }
 
@@ -360,6 +369,7 @@ class TimerManager: ObservableObject {
             updateBlocking()
         } else {
             currentLabel = ""
+            currentBreakKinds = []
             currentPhase = .work
             setTimeForCurrentPhase()
             updateBlocking()
@@ -505,7 +515,7 @@ class TimerManager: ObservableObject {
     // MARK: - Notifications
 
     private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
     }
 
     private func sendNotification(breakStarting: Bool) {
@@ -516,7 +526,6 @@ class TimerManager: ObservableObject {
             : currentPhase == .work
                 ? "Break over — ready to focus?"
                 : "Session complete."
-        content.sound = .default
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         )

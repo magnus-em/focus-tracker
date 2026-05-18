@@ -1,4 +1,5 @@
 import SwiftUI
+import FocusCore
 
 struct TimerView: View {
     @ObservedObject var timer: TimerManager
@@ -9,6 +10,7 @@ struct TimerView: View {
 
     @State private var showBreakPicker = false
     @State private var customBreakMinutes: Double = 30
+    @State private var selectedBreakKinds: Set<BreakKind> = []
 
     private var phaseColor: Color {
         switch timer.currentPhase {
@@ -247,11 +249,32 @@ struct TimerView: View {
 
             glassChipGroup {
                 HStack(spacing: 6) {
+                    ForEach(BreakKind.allCases) { kind in
+                        let sel = selectedBreakKinds.contains(kind)
+                        Button {
+                            if sel { selectedBreakKinds.remove(kind) }
+                            else   { selectedBreakKinds.insert(kind) }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: kind.icon).font(.system(size: 9))
+                                Text(kind.displayName).font(.system(size: 11, weight: .medium))
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .foregroundStyle(sel ? Color(red: 0.27, green: 0.62, blue: 0.83) : Color.secondary)
+                        .glassChip()
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            glassChipGroup {
+                HStack(spacing: 6) {
                     ForEach([30.0, 60.0, 120.0], id: \.self) { mins in
                         let label = mins < 60 ? "\(Int(mins))m" : "\(Int(mins / 60))h"
                         Button(label) {
-                            showBreakPicker = false
-                            timer.startManualBreak(minutes: mins)
+                            startBreak(minutes: mins)
                         }
                         .font(.system(size: 11, weight: .medium))
                         .padding(.horizontal, 10)
@@ -291,9 +314,7 @@ struct TimerView: View {
                 Spacer()
 
                 Button("Start") {
-                    let mins = customBreakMinutes
-                    showBreakPicker = false
-                    timer.startManualBreak(minutes: mins)
+                    startBreak(minutes: customBreakMinutes)
                 }
                 .font(.system(size: 11, weight: .semibold))
                 .padding(.horizontal, 12)
@@ -415,6 +436,14 @@ struct TimerView: View {
             }
         }
         .padding(.bottom, 4)
+    }
+
+    private func startBreak(minutes: Double) {
+        let kinds = BreakKind.allCases.filter { selectedBreakKinds.contains($0) }
+        showBreakPicker = false
+        let captured = kinds
+        selectedBreakKinds = []
+        timer.startManualBreak(minutes: minutes, kinds: captured)
     }
 
     private func formatMinutes(_ minutes: Double) -> String {

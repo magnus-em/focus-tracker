@@ -1,0 +1,41 @@
+name: Focus
+options:
+  bundleIdPrefix: com.magnus
+  deploymentTarget:
+    macOS: "14.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+
+packages:
+  FocusCore:
+    path: FocusCore
+
+targets:
+  Focus:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: FocusCore
+        product: FocusCore
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleName: Focus
+        CFBundleDisplayName: Focus
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        CFBundleIconFile: AppIcon
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.0"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.magnus.focus
+        CODE_SIGN_ENTITLEMENTS: Focus.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: MUR9TJXP6S
+        SWIFT_VERSION: "5.9"
+        ENABLE_PREVIEWS: YES
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: YES

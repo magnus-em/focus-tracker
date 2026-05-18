@@ -1,59 +1,79 @@
 import Foundation
+import FocusCore
+import SwiftData
 
 class ProblemStore: ObservableObject {
     @Published var problems: [ProblemEntry] = []
 
-    private let fileURL: URL
+    private let context: ModelContext
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = appSupport.appendingPathComponent("Focus")
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        fileURL = appDir.appendingPathComponent("problems.json")
-        load()
+    init(container: ModelContainer) {
+        self.context = ModelContext(container)
+        refresh()
+    }
+
+    private func refresh() {
+        var descriptor = FetchDescriptor<StoredProblem>(
+            sortBy: [SortDescriptor(\.date)]
+        )
+        descriptor.includePendingChanges = true
+        let stored = (try? context.fetch(descriptor)) ?? []
+        problems = stored.map { $0.asValue }
     }
 
     func add(_ entry: ProblemEntry) {
-        problems.append(entry)
-        save()
+        context.insert(StoredProblem(value: entry))
+        try? context.save()
+        refresh()
     }
 
     func clearAll() {
-        problems = []
-        save()
+        try? context.delete(model: StoredProblem.self)
+        try? context.save()
+        refresh()
     }
 
     func update(_ entry: ProblemEntry) {
-        guard let i = problems.firstIndex(where: { $0.id == entry.id }) else { return }
-        problems[i] = entry
-        save()
+        let target = entry.id
+        let predicate = #Predicate<StoredProblem> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredProblem>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        guard let model = try? context.fetch(descriptor).first else { return }
+        model.title = entry.title
+        model.domain = entry.domain
+        model.categories = entry.categories
+        model.difficulty = entry.difficulty
+        model.needsReview = entry.needsReview
+        model.confidence = entry.confidence
+        model.source = entry.source
+        model.notes = entry.notes
+        model.urlString = entry.url
+        model.solveMinutes = entry.solveMinutes
+        try? context.save()
+        refresh()
     }
 
     func delete(id: UUID) {
-        problems.removeAll { $0.id == id }
-        save()
-    }
-
-    func clearReview(id: UUID) {
-        guard let i = problems.firstIndex(where: { $0.id == id }) else { return }
-        problems[i].needsReview = false
-        save()
-    }
-
-    private func save() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(problems) {
-            try? data.write(to: fileURL, options: .atomic)
+        let target = id
+        let predicate = #Predicate<StoredProblem> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredProblem>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            context.delete(model)
+            try? context.save()
+            refresh()
         }
     }
 
-    private func load() {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? decoder.decode([ProblemEntry].self, from: data) {
-            problems = decoded
+    func clearReview(id: UUID) {
+        let target = id
+        let predicate = #Predicate<StoredProblem> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredProblem>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            model.needsReview = false
+            try? context.save()
+            refresh()
         }
     }
 

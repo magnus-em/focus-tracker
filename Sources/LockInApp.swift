@@ -1,6 +1,33 @@
 import SwiftUI
+import SwiftData
+import FocusCore
 
 private var _pauseHotKey: GlobalHotKey?
+
+/// Shared SwiftData container — local-only for now. Flip `cloudKitSync: true`
+/// once the iCloud entitlement is wired up via Xcode project + provisioning.
+/// Reads UserDefaults key `cloudKitSyncEnabled` so you can toggle without rebuilding.
+/// Default ON — flip to false if signing isn't set up yet.
+private let focusContainer: ModelContainer = {
+    let useCloud = UserDefaults.standard.object(forKey: "cloudKitSyncEnabled") as? Bool ?? true
+    do {
+        return try FocusModelContainer.make(cloudKitSync: useCloud)
+    } catch {
+        // If CloudKit init fails (no entitlement, no signing), fall back to local-only.
+        print("[FocusContainer] CloudKit init failed, falling back to local: \(error)")
+        return try! FocusModelContainer.make(cloudKitSync: false)
+    }
+}()
+
+private func runOneShotMigration() {
+    let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+    let appDir = appSupport.appendingPathComponent("Focus")
+    try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
+    let result = FocusMigration.migrateIfNeeded(container: focusContainer, appSupportDir: appDir)
+    if !result.alreadyMigrated {
+        print("[FocusMigration] sessions=\(result.sessions) problems=\(result.problems) homework=\(result.homework) days=\(result.dayRecords) scratch=\(result.scratch)")
+    }
+}
 
 @main
 struct FocusApp: App {
@@ -8,13 +35,16 @@ struct FocusApp: App {
     @StateObject private var sessionStore: SessionStore
     @StateObject private var settings: AppSettings
     @StateObject private var problemStore: ProblemStore
+    @StateObject private var homeworkStore: HomeworkStore
     @StateObject private var scratchStore: ScratchStore
-    @StateObject private var commitmentStore: CommitmentStore
     @StateObject private var dayStore: DayStore
     @StateObject private var dashboardController: DashboardWindowController
+    @StateObject private var onboardingController: OnboardingWindowController
 
     init() {
-        let store = SessionStore()
+        runOneShotMigration()
+
+        let store = SessionStore(container: focusContainer)
         let appSettings = AppSettings()
         let timer = TimerManager()
         timer.recoverPartialSession(into: store)
@@ -25,13 +55,24 @@ struct FocusApp: App {
         _sessionStore        = StateObject(wrappedValue: store)
         _settings            = StateObject(wrappedValue: appSettings)
         _timerManager        = StateObject(wrappedValue: timer)
-        _problemStore        = StateObject(wrappedValue: ProblemStore())
-        _scratchStore        = StateObject(wrappedValue: ScratchStore())
-        _commitmentStore     = StateObject(wrappedValue: CommitmentStore())
-        _dayStore            = StateObject(wrappedValue: DayStore())
+        _problemStore        = StateObject(wrappedValue: ProblemStore(container: focusContainer))
+        _homeworkStore       = StateObject(wrappedValue: HomeworkStore(container: focusContainer))
+        _scratchStore        = StateObject(wrappedValue: ScratchStore(container: focusContainer))
+        _dayStore            = StateObject(wrappedValue: DayStore(container: focusContainer))
         _dashboardController = StateObject(wrappedValue: DashboardWindowController())
+        let onboarding = OnboardingWindowController()
+        _onboardingController = StateObject(wrappedValue: onboarding)
 
         SiteBlocker.cleanupIfNeeded()
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification,
+            object: nil, queue: .main
+        ) { _ in
+            if !appSettings.hasCompletedOnboarding {
+                onboarding.open(settings: appSettings)
+            }
+        }
 
         _pauseHotKey = GlobalHotKey(
             keyCode: GlobalHotKey.spaceKey,
@@ -57,8 +98,8 @@ struct FocusApp: App {
                 sessionStore: sessionStore,
                 settings: settings,
                 problemStore: problemStore,
+                homeworkStore: homeworkStore,
                 scratchStore: scratchStore,
-                commitmentStore: commitmentStore,
                 dayStore: dayStore,
                 openDashboard: { [self] in
                     dashboardController.open(
@@ -68,6 +109,9 @@ struct FocusApp: App {
                         dayStore: dayStore,
                         timerManager: timerManager
                     )
+                },
+                openOnboarding: { [self] in
+                    onboardingController.open(settings: settings)
                 }
             )
         } label: {
@@ -86,10 +130,11 @@ struct PopoverContent: View {
     @ObservedObject var sessionStore: SessionStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var problemStore: ProblemStore
+    @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var scratchStore: ScratchStore
-    @ObservedObject var commitmentStore: CommitmentStore
     @ObservedObject var dayStore: DayStore
     let openDashboard: () -> Void
+    let openOnboarding: () -> Void
 
     @State private var selectedTab = 0
     @State private var showCommitment = false
@@ -102,8 +147,6 @@ struct PopoverContent: View {
             .frame(width: 300)
             .popoverBackground()
             .onAppear {
-                // Only prompt once per calendar day — prevents the microphone dialog
-                // from reappearing every time the popover reopens after a session ends.
                 let todayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
                 if dayStore.isDayStarted && settings.needsCommitmentToday
                     && lastCommitmentPromptDay < todayStart {
@@ -146,9 +189,9 @@ struct PopoverContent: View {
                         dayStore: dayStore, showCommitment: $showCommitment
                     )
                     case 1: StatsView(store: sessionStore, settings: settings)
-                    case 2: ProblemsView(store: problemStore, settings: settings)
+                    case 2: ProblemsView(store: problemStore, homeworkStore: homeworkStore, settings: settings)
                     case 3: ScratchpadView(store: scratchStore)
-                    default: SettingsView(settings: settings, timer: timerManager, store: sessionStore)
+                    default: SettingsView(settings: settings, timer: timerManager, store: sessionStore, openOnboarding: openOnboarding)
                     }
                 }
                 .frame(height: 480)
@@ -183,7 +226,7 @@ struct PopoverContent: View {
             }
 
             if showCommitment {
-                CommitmentView(settings: settings, oathStore: commitmentStore, isShowing: $showCommitment)
+                CommitmentView(settings: settings, isShowing: $showCommitment)
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
                     .zIndex(10)
             }

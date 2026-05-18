@@ -1,58 +1,82 @@
 import Foundation
+import FocusCore
+import SwiftData
 
 class ScratchStore: ObservableObject {
     @Published var items: [ScratchItem] = []
 
-    private let fileURL: URL
+    private let context: ModelContext
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = appSupport.appendingPathComponent("Focus")
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        fileURL = appDir.appendingPathComponent("scratch.json")
-        load()
+    init(container: ModelContainer) {
+        self.context = ModelContext(container)
+        refresh()
+    }
+
+    private func refresh() {
+        var descriptor = FetchDescriptor<StoredScratchItem>(
+            sortBy: [SortDescriptor(\.order)]
+        )
+        descriptor.includePendingChanges = true
+        let stored = (try? context.fetch(descriptor)) ?? []
+        items = stored.map { $0.asValue }
+    }
+
+    private func nextOrder() -> Int {
+        var descriptor = FetchDescriptor<StoredScratchItem>(
+            sortBy: [SortDescriptor(\.order, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        if let highest = try? context.fetch(descriptor).first {
+            return highest.order + 1
+        }
+        return 0
     }
 
     func add(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        items.append(ScratchItem(text: trimmed))
-        save()
+        let item = StoredScratchItem(value: ScratchItem(text: trimmed), order: nextOrder())
+        context.insert(item)
+        try? context.save()
+        refresh()
     }
 
     func toggle(_ item: ScratchItem) {
-        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[i].isChecked.toggle()
-        save()
+        let target = item.id
+        let predicate = #Predicate<StoredScratchItem> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredScratchItem>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            model.isChecked.toggle()
+            try? context.save()
+            refresh()
+        }
     }
 
     func delete(_ item: ScratchItem) {
-        items.removeAll { $0.id == item.id }
-        save()
+        let target = item.id
+        let predicate = #Predicate<StoredScratchItem> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredScratchItem>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            context.delete(model)
+            try? context.save()
+            refresh()
+        }
     }
 
     func clearChecked() {
-        items.removeAll { $0.isChecked }
-        save()
+        let predicate = #Predicate<StoredScratchItem> { $0.isChecked == true }
+        try? context.delete(model: StoredScratchItem.self, where: predicate)
+        try? context.save()
+        refresh()
     }
 
     func clearAll() {
-        items = []
-        save()
+        try? context.delete(model: StoredScratchItem.self)
+        try? context.save()
+        refresh()
     }
 
     var hasChecked: Bool { items.contains { $0.isChecked } }
-
-    private func save() {
-        if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
-    }
-
-    private func load() {
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode([ScratchItem].self, from: data) {
-            items = decoded
-        }
-    }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import FocusCore
 import SwiftUI
 
 // MARK: - Window controller
@@ -63,52 +64,87 @@ struct DashboardView: View {
     @ObservedObject var timerManager: TimerManager
 
     @State private var editingEvent: DayEvent? = nil
+    @State private var selectedDay: Date = Calendar.current.startOfDay(for: Date())
 
     private let red   = Color(red: 0.96, green: 0.36, blue: 0.36)
     private let blue  = Color(red: 0.27, green: 0.62, blue: 0.83)
     private let green = Color(red: 0.25, green: 0.72, blue: 0.53)
     private let amber = Color(red: 0.98, green: 0.70, blue: 0.18)
 
-    private var todayEvents: [DayEvent] {
+    private var isSelectedDayToday: Bool { Calendar.current.isDateInToday(selectedDay) }
+
+    private var selectedDayRecord: DayRecord? { dayStore.record(for: selectedDay) }
+
+    private var selectedDayFocusSessions: [WorkSession] {
         let cal = Calendar.current
-        let focus = sessionStore.sessions
-            .filter { $0.type == .work && cal.isDateInToday($0.startTime) }
+        return sessionStore.sessions.filter {
+            $0.type == .work && cal.isDate($0.startTime, inSameDayAs: selectedDay)
+        }
+    }
+
+    private var selectedDayBreakSessions: [WorkSession] {
+        let cal = Calendar.current
+        return sessionStore.sessions.filter {
+            $0.type.isBreak && cal.isDate($0.startTime, inSameDayAs: selectedDay)
+        }
+    }
+
+    private var selectedDayFocusMinutes: Double {
+        selectedDayFocusSessions.reduce(0) { $0 + $1.durationMinutes }
+    }
+
+    private var selectedDayBreakMinutes: Double {
+        selectedDayBreakSessions.reduce(0) { $0 + $1.durationMinutes }
+    }
+
+    private var selectedDayProblemCount: Int {
+        let cal = Calendar.current
+        return problemStore.problems.filter { cal.isDate($0.date, inSameDayAs: selectedDay) }.count
+    }
+
+    private var selectedDayEvents: [DayEvent] {
+        let cal = Calendar.current
+        let focus = selectedDayFocusSessions
             .map { DayEvent(id: $0.id.uuidString, time: $0.startTime, kind: .focus($0)) }
-        let breaks = sessionStore.sessions
-            .filter { $0.type.isBreak && cal.isDateInToday($0.startTime) }
+        let breaks = selectedDayBreakSessions
             .map { DayEvent(id: $0.id.uuidString + "-b", time: $0.startTime, kind: .breakSession($0)) }
         let problems = problemStore.problems
-            .filter { cal.isDateInToday($0.date) }
+            .filter { cal.isDate($0.date, inSameDayAs: selectedDay) }
             .map { DayEvent(id: $0.id.uuidString, time: $0.date, kind: .problem($0)) }
 
         var inProgress: [DayEvent] = []
-        if let live = timerManager.currentInProgressSession, cal.isDateInToday(live.startTime) {
-            inProgress.append(DayEvent(
-                id: "in-progress",
-                time: live.startTime,
-                kind: .inProgressFocus(
-                    start: live.startTime,
-                    elapsedMinutes: live.durationMinutes,
-                    label: live.label
-                )
-            ))
-        }
-        if let liveBreak = timerManager.currentInProgressBreak, cal.isDateInToday(liveBreak.startTime) {
-            inProgress.append(DayEvent(
-                id: "in-progress-break",
-                time: liveBreak.startTime,
-                kind: .inProgressBreak(
-                    start: liveBreak.startTime,
-                    elapsedMinutes: liveBreak.durationMinutes
-                )
-            ))
+        if isSelectedDayToday {
+            if let live = timerManager.currentInProgressSession, cal.isDateInToday(live.startTime) {
+                inProgress.append(DayEvent(
+                    id: "in-progress",
+                    time: live.startTime,
+                    kind: .inProgressFocus(
+                        start: live.startTime,
+                        elapsedMinutes: live.durationMinutes,
+                        label: live.label
+                    )
+                ))
+            }
+            if let liveBreak = timerManager.currentInProgressBreak, cal.isDateInToday(liveBreak.startTime) {
+                inProgress.append(DayEvent(
+                    id: "in-progress-break",
+                    time: liveBreak.startTime,
+                    kind: .inProgressBreak(
+                        start: liveBreak.startTime,
+                        elapsedMinutes: liveBreak.durationMinutes
+                    )
+                ))
+            }
         }
 
         return (inProgress + focus + breaks + problems).sorted { $0.time > $1.time }
     }
 
-    private var todayProblemCount: Int {
-        problemStore.problems.filter { Calendar.current.isDateInToday($0.date) }.count
+    private func shiftSelectedDay(by days: Int) {
+        if let next = Calendar.current.date(byAdding: .day, value: days, to: selectedDay) {
+            let todayStart = Calendar.current.startOfDay(for: Date())
+            selectedDay = min(Calendar.current.startOfDay(for: next), todayStart)
+        }
     }
 
     var body: some View {
@@ -127,22 +163,28 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Left: Today's log
+    // MARK: - Left: Selected day's log
 
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("TODAY'S LOG")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundStyle(.secondary)
-                Text(todayDateString)
+                HStack(spacing: 6) {
+                    Text(isSelectedDayToday ? "TODAY'S LOG" : "DAY LOG")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    dayNavButton(systemImage: "chevron.left") { shiftSelectedDay(by: -1) }
+                    dayNavButton(systemImage: "chevron.right",
+                                 disabled: isSelectedDayToday) { shiftSelectedDay(by: 1) }
+                }
+                Text(dayHeaderString(selectedDay))
                     .font(.system(size: 14, weight: .semibold))
-                if let start = dayStore.todayRecord?.dayStart {
+                if let rec = selectedDayRecord, let start = rec.dayStart {
                     HStack(spacing: 3) {
                         Image(systemName: "sunrise").font(.system(size: 9))
                         Text(clockStr(start))
-                        if let end = dayStore.todayRecord?.dayEnd {
+                        if let end = rec.dayEnd {
                             Text("→")
                             Image(systemName: "moon").font(.system(size: 9))
                             Text(clockStr(end))
@@ -151,7 +193,7 @@ struct DashboardView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 }
-                if !settings.todayCommitment.isEmpty {
+                if isSelectedDayToday, !settings.todayCommitment.isEmpty {
                     Text("\u{201C}\(settings.todayCommitment)\u{201D}")
                         .font(.system(size: 10).italic())
                         .foregroundStyle(.secondary)
@@ -165,19 +207,15 @@ struct DashboardView: View {
 
             Divider()
 
-            let events = todayEvents
+            let events = selectedDayEvents
             if events.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "moon.zzz")
                         .font(.system(size: 24))
                         .foregroundStyle(.tertiary)
-                    Text("Nothing logged yet today")
+                    Text(isSelectedDayToday ? "Nothing logged yet today" : "No activity logged")
                         .font(.system(size: 12))
                         .foregroundStyle(.tertiary)
-                    Text("Sessions and problems\nappear here as you work.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.quaternary)
-                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -193,17 +231,17 @@ struct DashboardView: View {
 
             Divider()
             HStack {
-                Label(fmtMins(sessionStore.todayWorkMinutes), systemImage: "timer")
+                Label(fmtMins(selectedDayFocusMinutes), systemImage: "timer")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(red)
                 Spacer()
-                if sessionStore.todayBreakMinutes >= 1 {
-                    Label(fmtMins(sessionStore.todayBreakMinutes), systemImage: "cup.and.saucer")
+                if selectedDayBreakMinutes >= 1 {
+                    Label(fmtMins(selectedDayBreakMinutes), systemImage: "cup.and.saucer")
                         .font(.system(size: 10))
                         .foregroundStyle(blue)
                     Spacer()
                 }
-                Label("\(todayProblemCount)", systemImage: "checkmark.circle")
+                Label("\(selectedDayProblemCount)", systemImage: "checkmark.circle")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -212,11 +250,39 @@ struct DashboardView: View {
         }
     }
 
+    @ViewBuilder
+    private func dayNavButton(systemImage: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(disabled ? Color.secondary.opacity(0.4) : Color.secondary)
+                .frame(width: 22, height: 18)
+                .background(Color.secondary.opacity(disabled ? 0.04 : 0.08))
+                .cornerRadius(4)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private func dayHeaderString(_ d: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "Today · " + shortDate(d) }
+        if cal.isDateInYesterday(d) { return "Yesterday · " + shortDate(d) }
+        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"
+        return f.string(from: d)
+    }
+
+    private func shortDate(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "MMM d"
+        return f.string(from: d)
+    }
+
     // MARK: - Right: Stats + insights
 
     private var rightPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                dayTimelineSection
                 statCards
                 problemProgressSection
                 weeklySection
@@ -229,6 +295,41 @@ struct DashboardView: View {
             }
             .padding(14)
         }
+    }
+
+    // MARK: - Day timeline
+
+    private var dayTimelineSection: some View {
+        let focus = selectedDayFocusSessions
+        let breaks = selectedDayBreakSessions
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                sectionLabel("DAY TIMELINE")
+                Spacer()
+                Text(dayHeaderString(selectedDay))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            if focus.isEmpty && breaks.isEmpty {
+                Text(isSelectedDayToday ? "No sessions yet today." : "No sessions on this day.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
+            } else {
+                DayTimelineCanvas(
+                    day: selectedDay,
+                    focus: focus,
+                    breaks: breaks,
+                    livefocus: isSelectedDayToday ? timerManager.currentInProgressSession : nil,
+                    liveBreak: isSelectedDayToday ? timerManager.currentInProgressBreak : nil,
+                    red: red, blue: blue
+                )
+            }
+        }
+        .padding(12)
+        .glassCard(cornerRadius: 10)
     }
 
     // MARK: - Stat cards
@@ -601,8 +702,8 @@ private struct EventRow: View {
 
     private var isEditable: Bool {
         switch event.kind {
-        case .focus, .problem: return true
-        case .breakSession, .inProgressFocus, .inProgressBreak: return false
+        case .focus, .problem, .breakSession: return true
+        case .inProgressFocus, .inProgressBreak: return false
         }
     }
 
@@ -709,11 +810,22 @@ private struct EventRow: View {
                 .fill(blue.opacity(0.5))
                 .frame(width: 3, height: 22)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Break")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(blue)
-                    .lineLimit(1)
-                Text(fmtMins(s.durationMinutes))
+                HStack(spacing: 5) {
+                    Text("Break")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(blue)
+                        .lineLimit(1)
+                    if let kinds = s.breakKinds, !kinds.isEmpty {
+                        HStack(spacing: 3) {
+                            ForEach(kinds) { k in
+                                Image(systemName: k.icon)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(blue.opacity(0.85))
+                            }
+                        }
+                    }
+                }
+                Text(breakSubtitle(s))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -722,6 +834,14 @@ private struct EventRow: View {
                 .font(.system(size: 10))
                 .foregroundStyle(blue.opacity(0.4))
         }
+    }
+
+    private func breakSubtitle(_ s: WorkSession) -> String {
+        let mins = fmtMins(s.durationMinutes)
+        if let kinds = s.breakKinds, !kinds.isEmpty {
+            return mins + " · " + kinds.map(\.displayName).joined(separator: ", ")
+        }
+        return mins
     }
 
     private func problemRow(_ p: ProblemEntry) -> some View {
@@ -756,6 +876,9 @@ private struct EventEditSheet: View {
     @State private var selectedLabel = ""
     @State private var selectedConfidence: Confidence = .solid
     @State private var selectedDifficulty: ProblemDifficulty = .medium
+    @State private var selectedBreakKinds: Set<BreakKind> = []
+
+    private let blue = Color(red: 0.27, green: 0.62, blue: 0.83)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -778,7 +901,7 @@ private struct EventEditSheet: View {
                 switch event.kind {
                 case .focus(let s):        sessionFields(s)
                 case .problem(let p):      problemFields(p)
-                case .breakSession:        EmptyView()
+                case .breakSession(let s): breakFields(s)
                 case .inProgressFocus:     EmptyView()
                 case .inProgressBreak:     EmptyView()
                 }
@@ -795,7 +918,9 @@ private struct EventEditSheet: View {
             case .problem(let p):
                 selectedConfidence = p.confidence
                 selectedDifficulty = p.difficulty
-            case .breakSession, .inProgressFocus, .inProgressBreak:
+            case .breakSession(let s):
+                selectedBreakKinds = Set(s.breakKinds ?? [])
+            case .inProgressFocus, .inProgressBreak:
                 break
             }
         }
@@ -835,6 +960,42 @@ private struct EventEditSheet: View {
 
         saveButton {
             sessionStore.updateLabel(id: s.id, label: selectedLabel.isEmpty ? nil : selectedLabel)
+        }
+    }
+
+    @ViewBuilder
+    private func breakFields(_ s: WorkSession) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "cup.and.saucer").font(.system(size: 11)).foregroundStyle(blue)
+            Text(clockStr(s.startTime) + " · " + fmtMins(s.durationMinutes))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+
+        VStack(alignment: .leading, spacing: 7) {
+            sheetLabel("TYPE")
+            HStack(spacing: 6) {
+                ForEach(BreakKind.allCases) { kind in
+                    let sel = selectedBreakKinds.contains(kind)
+                    Button {
+                        if sel { selectedBreakKinds.remove(kind) }
+                        else   { selectedBreakKinds.insert(kind) }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: kind.icon).font(.system(size: 10))
+                            Text(kind.displayName).font(.system(size: 11, weight: .medium))
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(sel ? blue.opacity(0.15) : Color.secondary.opacity(0.07))
+                    .foregroundStyle(sel ? blue : .secondary)
+                    .cornerRadius(6).buttonStyle(.plain)
+                }
+            }
+        }
+
+        saveButton {
+            let ordered = BreakKind.allCases.filter { selectedBreakKinds.contains($0) }
+            sessionStore.updateBreakKinds(id: s.id, kinds: ordered)
         }
     }
 
@@ -907,5 +1068,167 @@ private struct EventEditSheet: View {
 
     private func clockStr(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "h:mma"; return f.string(from: d)
+    }
+}
+
+// MARK: - Day timeline canvas
+
+private struct DayTimelineCanvas: View {
+    let day: Date
+    let focus: [WorkSession]
+    let breaks: [WorkSession]
+    let livefocus: WorkSession?
+    let liveBreak: WorkSession?
+    let red: Color
+    let blue: Color
+
+    private struct Block {
+        let start: Date
+        let end: Date
+        let label: String
+        let subtitle: String?
+        let color: Color
+        let isLive: Bool
+    }
+
+    private var blocks: [Block] {
+        var out: [Block] = []
+        for s in focus {
+            let end = s.startTime.addingTimeInterval(s.durationMinutes * 60)
+            out.append(Block(
+                start: s.startTime, end: end,
+                label: s.label?.isEmpty == false ? s.label! : "Focus",
+                subtitle: fmtDuration(s.durationMinutes),
+                color: red, isLive: false
+            ))
+        }
+        for s in breaks {
+            let end = s.startTime.addingTimeInterval(s.durationMinutes * 60)
+            let kindStr = (s.breakKinds ?? []).map(\.displayName).joined(separator: ", ")
+            out.append(Block(
+                start: s.startTime, end: end,
+                label: kindStr.isEmpty ? "Break" : kindStr,
+                subtitle: fmtDuration(s.durationMinutes),
+                color: blue, isLive: false
+            ))
+        }
+        if let live = livefocus {
+            let end = live.startTime.addingTimeInterval(live.durationMinutes * 60)
+            out.append(Block(
+                start: live.startTime, end: end,
+                label: live.label?.isEmpty == false ? live.label! : "Focus",
+                subtitle: fmtDuration(live.durationMinutes) + " · live",
+                color: red, isLive: true
+            ))
+        }
+        if let live = liveBreak {
+            let end = live.startTime.addingTimeInterval(live.durationMinutes * 60)
+            out.append(Block(
+                start: live.startTime, end: end,
+                label: "Break",
+                subtitle: fmtDuration(live.durationMinutes) + " · live",
+                color: blue, isLive: true
+            ))
+        }
+        return out.sorted { $0.start < $1.start }
+    }
+
+    private var hourRange: (start: Int, end: Int) {
+        let cal = Calendar.current
+        guard let first = blocks.map(\.start).min(),
+              let last = blocks.map(\.end).max() else { return (8, 18) }
+        var s = cal.component(.hour, from: first)
+        var e = cal.component(.hour, from: last)
+        if cal.component(.minute, from: last) > 0 { e += 1 }
+        s = max(0, s - 1)
+        e = min(24, e + 1)
+        if e - s < 8 { e = min(24, s + 8) }
+        return (s, e)
+    }
+
+    private let rowHeight: CGFloat = 22
+    private let leftCol: CGFloat = 38
+
+    var body: some View {
+        let range = hourRange
+        let totalHours = range.end - range.start
+        let height = CGFloat(totalHours) * rowHeight
+
+        HStack(alignment: .top, spacing: 6) {
+            VStack(alignment: .trailing, spacing: 0) {
+                ForEach(range.start..<range.end, id: \.self) { h in
+                    Text(hourLabel(h))
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: leftCol, height: rowHeight, alignment: .trailing)
+                }
+            }
+
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    ForEach(0..<totalHours, id: \.self) { i in
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.06))
+                            .frame(height: 0.5)
+                            .frame(maxWidth: .infinity)
+                        Spacer()
+                    }
+                }
+                .frame(height: height)
+                .background(Color.secondary.opacity(0.03))
+                .cornerRadius(4)
+
+                GeometryReader { geo in
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
+                        block(b, range: range, totalHeight: height, width: geo.size.width)
+                    }
+                }
+                .frame(height: height)
+            }
+        }
+    }
+
+    private func block(_ b: Block, range: (start: Int, end: Int), totalHeight: CGFloat, width: CGFloat) -> some View {
+        let totalSeconds = Double(range.end - range.start) * 3600.0
+        let cal = Calendar.current
+        let rangeStartDate = cal.date(bySettingHour: range.start, minute: 0, second: 0, of: day)!
+        let startOffset = b.start.timeIntervalSince(rangeStartDate)
+        let duration = b.end.timeIntervalSince(b.start)
+        let y = max(0, CGFloat(startOffset / totalSeconds) * totalHeight)
+        let h = max(8, CGFloat(duration / totalSeconds) * totalHeight)
+
+        return HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(b.color.opacity(b.isLive ? 0.85 : 0.75))
+                .overlay(
+                    HStack(spacing: 4) {
+                        Text(b.label)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        if let sub = b.subtitle, h >= 18 {
+                            Text("· \(sub)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 5)
+                )
+        }
+        .frame(width: width, height: h)
+        .offset(y: y)
+    }
+
+    private func hourLabel(_ h: Int) -> String {
+        let mod = h % 12 == 0 ? 12 : h % 12
+        let ampm = h < 12 ? "a" : "p"
+        return "\(mod)\(ampm)"
+    }
+
+    private func fmtDuration(_ m: Double) -> String {
+        let h = Int(m) / 60, mn = Int(m) % 60
+        return h > 0 ? "\(h)h \(mn)m" : "\(Int(m))m"
     }
 }

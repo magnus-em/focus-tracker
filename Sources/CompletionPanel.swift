@@ -39,9 +39,6 @@ class CompletionPanel {
         p.isMovableByWindowBackground = true
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         p.center()
-        if let screen = NSScreen.main {
-            p.setFrameOrigin(NSPoint(x: p.frame.origin.x, y: screen.frame.height * 0.82))
-        }
         // orderFront (not makeKeyAndOrderFront) so the MenuBarExtra popover stays open
         p.orderFront(nil)
         panel = p

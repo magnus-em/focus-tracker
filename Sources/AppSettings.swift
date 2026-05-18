@@ -53,6 +53,9 @@ class AppSettings: ObservableObject {
     @Published var todayCommitment: String {
         didSet { UserDefaults.standard.set(todayCommitment, forKey: "todayCommitment") }
     }
+    @Published var hasCompletedOnboarding: Bool {
+        didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding") }
+    }
 
     var needsCommitmentToday: Bool {
         guard commitmentEnabled else { return false }
@@ -88,6 +91,16 @@ class AppSettings: ObservableObject {
 
     init() {
         let d = UserDefaults.standard
+
+        // Existing-user detection: if any prior signal exists, skip onboarding.
+        if !d.bool(forKey: "hasCompletedOnboarding") {
+            let priorState = (d.stringArray(forKey: "tags")?.isEmpty == false)
+                || d.double(forKey: "lastCommitmentDateEpoch") > 0
+                || (d.string(forKey: "todayCommitment")?.isEmpty == false)
+                || d.double(forKey: "workMinutes") > 0
+            if priorState { d.set(true, forKey: "hasCompletedOnboarding") }
+        }
+
         d.register(defaults: [
             "workMinutes": 25.0,
             "shortBreakMinutes": 10.0,
@@ -132,13 +145,11 @@ class AppSettings: ObservableObject {
         problemSources = d.stringArray(forKey: "problemSources") ?? ["QuantGuide", "LeetCode"]
         let epoch = d.double(forKey: "interviewDate")
         interviewDate = epoch > 0 ? Date(timeIntervalSince1970: epoch) : nil
+        hasCompletedOnboarding = d.bool(forKey: "hasCompletedOnboarding")
 
-        // Ensure AI appears as a focus tag
+        // One-time normalization for legacy "AI/ML" tag.
         if tags.contains("AI/ML") {
             tags = tags.map { $0 == "AI/ML" ? "AI" : $0 }
-            d.set(tags, forKey: "tags")
-        } else if !tags.contains("AI") {
-            tags.append("AI")
             d.set(tags, forKey: "tags")
         }
     }

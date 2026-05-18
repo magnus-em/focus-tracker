@@ -1,0 +1,52 @@
+name: FocusPad
+options:
+  bundleIdPrefix: com.magnus.focus
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+
+packages:
+  FocusCore:
+    path: ../FocusCore
+
+targets:
+  FocusPad:
+    type: application
+    platform: iOS
+    sources:
+      - path: FocusPad
+    resources:
+      - path: Resources
+        optional: true
+    dependencies:
+      - package: FocusCore
+        product: FocusCore
+    info:
+      path: FocusPad/Info.plist
+      properties:
+        CFBundleDisplayName: Focus
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: ""
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.magnus.focus.iPad
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_ENTITLEMENTS: FocusPad/FocusPad.entitlements
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.9"
+        ENABLE_PREVIEWS: YES
+        GENERATE_INFOPLIST_FILE: NO

@@ -1,51 +1,19 @@
 import SwiftUI
-
-// MARK: - Colour extensions (SwiftUI-side only)
-
-extension ProblemDomain {
-    var color: Color {
-        switch self {
-        case .quant: return Color(red: 0.27, green: 0.62, blue: 0.83)
-        case .swe:   return Color(red: 0.25, green: 0.72, blue: 0.53)
-        }
-    }
-    var icon: String {
-        switch self {
-        case .quant: return "function"
-        case .swe:   return "chevron.left.forwardslash.chevron.right"
-        }
-    }
-}
-
-extension ProblemDifficulty {
-    var color: Color {
-        switch self {
-        case .easy:   return Color(red: 0.22, green: 0.72, blue: 0.45)
-        case .medium: return Color(red: 0.98, green: 0.70, blue: 0.18)
-        case .hard:   return Color(red: 0.96, green: 0.36, blue: 0.36)
-        }
-    }
-}
-
-extension Confidence {
-    var color: Color {
-        switch self {
-        case .solid:     return Color(red: 0.22, green: 0.72, blue: 0.45)
-        case .shaky:     return Color(red: 0.98, green: 0.70, blue: 0.18)
-        case .struggled: return Color(red: 0.96, green: 0.36, blue: 0.36)
-        }
-    }
-}
+import FocusCore
 
 // MARK: - Main view
 
 struct ProblemsView: View {
     @ObservedObject var store: ProblemStore
+    @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var settings: AppSettings
 
     @State private var showLog = false
     @State private var selectedProblem: ProblemEntry? = nil
     @State private var reviewExpanded = true
+    @State private var homeworkExpanded = false
+    @State private var showHomeworkLog = false
+    @State private var editingHomework: HomeworkProblem? = nil
 
     var body: some View {
         ZStack {
@@ -68,6 +36,8 @@ struct ProblemsView: View {
                     Divider().padding(.horizontal, 8)
 
                     recentSection
+
+                    homeworkSection
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 18)
@@ -77,6 +47,22 @@ struct ProblemsView: View {
                 LogProblemOverlay(store: store, settings: settings, isShowing: $showLog)
                     .transition(.opacity.animation(.easeInOut(duration: 0.15)))
                     .zIndex(1)
+            }
+
+            if showHomeworkLog {
+                HomeworkLogOverlay(store: homeworkStore, settings: settings, isShowing: $showHomeworkLog)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+                    .zIndex(3)
+            }
+
+            if let editing = editingHomework {
+                HomeworkEditOverlay(
+                    store: homeworkStore, settings: settings, item: editing,
+                    isShowing: Binding(get: { editingHomework != nil },
+                                       set: { if !$0 { editingHomework = nil } })
+                )
+                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+                .zIndex(4)
             }
 
             if selectedProblem != nil {
@@ -92,6 +78,66 @@ struct ProblemsView: View {
                 .zIndex(2)
             }
         }
+    }
+
+    // MARK: - Homework (side system)
+
+    private var homeworkSection: some View {
+        let items = homeworkStore.byNewest
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { homeworkExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "book")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text("HOMEWORK")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1)
+                        .foregroundStyle(.secondary)
+                    Text("\(items.count)")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button { showHomeworkLog = true } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6).padding(.vertical, 3)
+                            .background(Color.secondary.opacity(0.10))
+                            .cornerRadius(5)
+                    }
+                    .buttonStyle(.plain)
+                    Image(systemName: homeworkExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+
+            if homeworkExpanded {
+                Divider().padding(.horizontal, 10)
+                if items.isEmpty {
+                    Text("No homework problems logged. Use this for side problems you want to revisit — separate from interview tracking.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(items) { item in
+                            HomeworkRow(item: item, onTap: { editingHomework = item })
+                            Divider().padding(.leading, 18)
+                        }
+                    }
+                }
+            }
+        }
+        .background(Color.secondary.opacity(0.04))
+        .cornerRadius(8)
     }
 
     // MARK: - Interview countdown
@@ -940,5 +986,325 @@ struct LogProblemOverlay: View {
             solveMinutes: selectedSolveMinutes
         ))
         isShowing = false
+    }
+}
+
+// MARK: - Homework row
+
+private struct HomeworkRow: View {
+    let item: HomeworkProblem
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(item.confidence.color)
+                    .frame(width: 6, height: 6)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.title.isEmpty ? "Homework problem" : item.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if !item.source.isEmpty {
+                            Text(item.source)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            Text("·").font(.system(size: 9)).foregroundStyle(.quaternary)
+                        }
+                        Text(item.difficulty.rawValue)
+                            .font(.system(size: 10))
+                            .foregroundStyle(item.difficulty.color)
+                        if item.usedAI {
+                            Text("·").font(.system(size: 9)).foregroundStyle(.quaternary)
+                            HStack(spacing: 3) {
+                                Image(systemName: "sparkles").font(.system(size: 8))
+                                Text("AI").font(.system(size: 9))
+                            }
+                            .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                Spacer()
+                Text(shortDateStr(item.date))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.quaternary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func shortDateStr(_ d: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "today" }
+        if cal.isDateInYesterday(d) { return "yest" }
+        let f = DateFormatter(); f.dateFormat = "M/d"
+        return f.string(from: d)
+    }
+}
+
+// MARK: - Homework log/edit overlays (lightweight)
+
+private struct HomeworkFields: View {
+    @Binding var title: String
+    @Binding var source: String
+    @Binding var url: String
+    @Binding var difficulty: ProblemDifficulty
+    @Binding var confidence: Confidence
+    @Binding var usedAI: Bool
+    @Binding var notes: String
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("NAME").font(.system(size: 10, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                TextField("Problem title", text: $title)
+                    .font(.system(size: 13))
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(Color.secondary.opacity(0.07))
+                    .cornerRadius(7)
+            }
+
+            if !settings.problemSources.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("SOURCE").font(.system(size: 10, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(["Homework"] + settings.problemSources, id: \.self) { src in
+                                let sel = source == src
+                                Button(src) { source = sel ? "" : src }
+                                    .font(.system(size: 11, weight: .medium))
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .background(sel ? Color.secondary.opacity(0.2) : Color.secondary.opacity(0.07))
+                                    .foregroundStyle(sel ? .primary : .secondary)
+                                    .cornerRadius(7)
+                                    .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("DIFFICULTY").font(.system(size: 10, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ProblemDifficulty.allCases, id: \.self) { d in
+                        let sel = difficulty == d
+                        Button(d.rawValue) { difficulty = d }
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(sel ? d.color.opacity(0.15) : Color.secondary.opacity(0.07))
+                            .foregroundStyle(sel ? d.color : .secondary)
+                            .cornerRadius(7).buttonStyle(.plain)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("CONFIDENCE").font(.system(size: 10, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(Confidence.allCases, id: \.self) { c in
+                        let sel = confidence == c
+                        Button(c.rawValue) { confidence = c }
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(sel ? c.color.opacity(0.15) : Color.secondary.opacity(0.07))
+                            .foregroundStyle(sel ? c.color : .secondary)
+                            .cornerRadius(7).buttonStyle(.plain)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                Toggle(isOn: $usedAI) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles").font(.system(size: 10))
+                        Text("Used AI").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(usedAI ? .orange : .secondary)
+                }
+                .toggleStyle(.checkbox)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("URL").font(.system(size: 10, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                TextField("https://…", text: $url)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color.secondary.opacity(0.07))
+                    .cornerRadius(7)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("NOTES").font(.system(size: 10, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                TextEditor(text: $notes)
+                    .font(.system(size: 12))
+                    .frame(minHeight: 60)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.07))
+                    .cornerRadius(7)
+            }
+        }
+    }
+}
+
+struct HomeworkLogOverlay: View {
+    @ObservedObject var store: HomeworkStore
+    @ObservedObject var settings: AppSettings
+    @Binding var isShowing: Bool
+
+    @State private var title = ""
+    @State private var source = "Homework"
+    @State private var url = ""
+    @State private var difficulty: ProblemDifficulty = .medium
+    @State private var confidence: Confidence = .solid
+    @State private var usedAI = false
+    @State private var notes = ""
+
+    var body: some View {
+        ZStack {
+            Color(NSColor.windowBackgroundColor).ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack {
+                    Text("LOG HOMEWORK PROBLEM")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .tracking(1.5).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { isShowing = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16)).foregroundStyle(.tertiary)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 12)
+                Divider()
+                ScrollView {
+                    HomeworkFields(
+                        title: $title, source: $source, url: $url,
+                        difficulty: $difficulty, confidence: $confidence,
+                        usedAI: $usedAI, notes: $notes, settings: settings
+                    )
+                    .padding(20)
+                }
+                Divider()
+                Button {
+                    let t = title.trimmingCharacters(in: .whitespaces)
+                    guard !t.isEmpty else { return }
+                    store.add(HomeworkProblem(
+                        title: t, source: source,
+                        difficulty: difficulty, confidence: confidence,
+                        usedAI: usedAI,
+                        notes: notes.trimmingCharacters(in: .whitespaces),
+                        url: url.trimmingCharacters(in: .whitespaces)
+                    ))
+                    isShowing = false
+                } label: {
+                    Text("Save")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .background(title.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? Color.secondary.opacity(0.2)
+                                    : Color(red: 0.27, green: 0.62, blue: 0.83))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                .padding(16)
+            }
+        }
+    }
+}
+
+struct HomeworkEditOverlay: View {
+    @ObservedObject var store: HomeworkStore
+    @ObservedObject var settings: AppSettings
+    let item: HomeworkProblem
+    @Binding var isShowing: Bool
+
+    @State private var title = ""
+    @State private var source = ""
+    @State private var url = ""
+    @State private var difficulty: ProblemDifficulty = .medium
+    @State private var confidence: Confidence = .solid
+    @State private var usedAI = false
+    @State private var notes = ""
+
+    var body: some View {
+        ZStack {
+            Color(NSColor.windowBackgroundColor).ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack {
+                    Text("HOMEWORK PROBLEM")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .tracking(1.5).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { isShowing = false } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16)).foregroundStyle(.tertiary)
+                    }.buttonStyle(.plain)
+                }
+                .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 12)
+                Divider()
+                ScrollView {
+                    HomeworkFields(
+                        title: $title, source: $source, url: $url,
+                        difficulty: $difficulty, confidence: $confidence,
+                        usedAI: $usedAI, notes: $notes, settings: settings
+                    )
+                    .padding(20)
+                }
+                Divider()
+                HStack(spacing: 8) {
+                    Button {
+                        store.delete(id: item.id)
+                        isShowing = false
+                    } label: {
+                        Text("Delete")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                    }.buttonStyle(.plain)
+                    Spacer()
+                    Button {
+                        var updated = item
+                        updated.title = title.trimmingCharacters(in: .whitespaces)
+                        updated.source = source
+                        updated.url = url.trimmingCharacters(in: .whitespaces)
+                        updated.difficulty = difficulty
+                        updated.confidence = confidence
+                        updated.usedAI = usedAI
+                        updated.notes = notes.trimmingCharacters(in: .whitespaces)
+                        store.update(updated)
+                        isShowing = false
+                    } label: {
+                        Text("Save")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity).padding(.vertical, 10)
+                            .background(Color(red: 0.27, green: 0.62, blue: 0.83))
+                            .cornerRadius(8)
+                    }.buttonStyle(.plain)
+                }
+                .padding(16)
+            }
+        }
+        .onAppear {
+            title = item.title
+            source = item.source
+            url = item.url
+            difficulty = item.difficulty
+            confidence = item.confidence
+            usedAI = item.usedAI
+            notes = item.notes
+        }
     }
 }

@@ -1,15 +1,24 @@
 import Foundation
+import FocusCore
+import SwiftData
 
 class DayStore: ObservableObject {
     @Published var records: [DayRecord] = []
-    private let fileURL: URL
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = appSupport.appendingPathComponent("Focus")
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        fileURL = appDir.appendingPathComponent("dayrecords.json")
-        load()
+    private let context: ModelContext
+
+    init(container: ModelContainer) {
+        self.context = ModelContext(container)
+        refresh()
+    }
+
+    private func refresh() {
+        var descriptor = FetchDescriptor<StoredDayRecord>(
+            sortBy: [SortDescriptor(\.calendarDay)]
+        )
+        descriptor.includePendingChanges = true
+        let stored = (try? context.fetch(descriptor)) ?? []
+        records = stored.map { $0.asValue }
     }
 
     var todayRecord: DayRecord? {
@@ -24,42 +33,36 @@ class DayStore: ObservableObject {
     var isDayEnded: Bool { todayRecord?.dayEnd != nil }
 
     func startDay() {
-        if let i = records.firstIndex(where: { Calendar.current.isDateInToday($0.calendarDay) }) {
-            records[i].dayStart = Date()
-            records[i].dayEnd = nil
+        let today = Calendar.current.startOfDay(for: Date())
+        let predicate = #Predicate<StoredDayRecord> { $0.calendarDay == today }
+        var descriptor = FetchDescriptor<StoredDayRecord>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            model.dayStart = Date()
+            model.dayEnd = nil
         } else {
-            var r = DayRecord()
-            r.dayStart = Date()
-            records.append(r)
+            let stored = StoredDayRecord()
+            stored.calendarDay = today
+            stored.dayStart = Date()
+            context.insert(stored)
         }
-        save()
+        try? context.save()
+        refresh()
     }
 
     func endDay() {
-        if let i = records.firstIndex(where: { Calendar.current.isDateInToday($0.calendarDay) }) {
-            records[i].dayEnd = Date()
-            save()
+        let today = Calendar.current.startOfDay(for: Date())
+        let predicate = #Predicate<StoredDayRecord> { $0.calendarDay == today }
+        var descriptor = FetchDescriptor<StoredDayRecord>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            model.dayEnd = Date()
+            try? context.save()
+            refresh()
         }
     }
 
     func record(for date: Date) -> DayRecord? {
         records.first { Calendar.current.isDate($0.calendarDay, inSameDayAs: date) }
-    }
-
-    private func save() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(records) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
-    }
-
-    private func load() {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? decoder.decode([DayRecord].self, from: data) {
-            records = decoded
-        }
     }
 }

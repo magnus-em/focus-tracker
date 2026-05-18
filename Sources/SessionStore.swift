@@ -1,55 +1,61 @@
 import Foundation
+import FocusCore
+import SwiftData
 import SwiftUI
 
 class SessionStore: ObservableObject {
     @Published var sessions: [WorkSession] = []
 
-    private let fileURL: URL
+    private let context: ModelContext
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let oldDir = appSupport.appendingPathComponent("LockIn")
-        let appDir = appSupport.appendingPathComponent("Focus")
-        if FileManager.default.fileExists(atPath: oldDir.path), !FileManager.default.fileExists(atPath: appDir.path) {
-            try? FileManager.default.moveItem(at: oldDir, to: appDir)
-        }
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        fileURL = appDir.appendingPathComponent("sessions.json")
-        load()
+    init(container: ModelContainer) {
+        self.context = ModelContext(container)
+        refresh()
+    }
+
+    private func refresh() {
+        var descriptor = FetchDescriptor<StoredWorkSession>(
+            sortBy: [SortDescriptor(\.startTime)]
+        )
+        descriptor.includePendingChanges = true
+        let stored = (try? context.fetch(descriptor)) ?? []
+        sessions = stored.map { $0.asValue }
     }
 
     func addSession(_ session: WorkSession) {
-        sessions.append(session)
-        save()
+        context.insert(StoredWorkSession(value: session))
+        try? context.save()
+        refresh()
     }
 
     func updateLabel(id: UUID, label: String?) {
-        if let i = sessions.firstIndex(where: { $0.id == id }) {
-            sessions[i].label = label
-            save()
+        let target = id
+        let predicate = #Predicate<StoredWorkSession> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredWorkSession>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            model.label = label
+            try? context.save()
+            refresh()
+        }
+    }
+
+    func updateBreakKinds(id: UUID, kinds: [BreakKind]) {
+        let target = id
+        let predicate = #Predicate<StoredWorkSession> { $0.id == target }
+        var descriptor = FetchDescriptor<StoredWorkSession>(predicate: predicate)
+        descriptor.fetchLimit = 1
+        if let model = try? context.fetch(descriptor).first {
+            model.breakKinds = kinds.isEmpty ? nil : kinds
+            try? context.save()
+            refresh()
         }
     }
 
     func clearAllData() {
-        sessions = []
-        save()
-    }
-
-    private func save() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(sessions) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
-    }
-
-    private func load() {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? decoder.decode([WorkSession].self, from: data) {
-            sessions = decoded
-        }
+        try? context.delete(model: StoredWorkSession.self)
+        try? context.save()
+        refresh()
     }
 
     // MARK: - Today
