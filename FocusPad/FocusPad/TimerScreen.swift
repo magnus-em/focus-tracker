@@ -13,6 +13,7 @@ struct TimerScreen: View {
     @State private var showBreakSheet = false
     @State private var showCommitment = false
     @State private var showLabelPicker = false
+    @State private var showQuickAddProblem = false
     @State private var newPriority = ""
 
     var body: some View {
@@ -44,9 +45,20 @@ struct TimerScreen: View {
         }
         .navigationTitle("Focus")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Haptics.tap()
+                    showQuickAddProblem = true
+                } label: {
+                    Label("Log Problem", systemImage: "plus.circle")
+                }
+            }
+        }
         .sheet(isPresented: $showBreakSheet) { BreakSheet(engine: engine) }
         .sheet(isPresented: $showCommitment) { CommitmentSheet(settings: settings) }
         .sheet(isPresented: $showLabelPicker) { LabelPickerSheet(engine: engine, settings: settings) }
+        .sheet(isPresented: $showQuickAddProblem) { AddProblemSheet() }
         .onAppear {
             if settings.needsCommitmentToday && dayStarted { showCommitment = true }
             priorities.load()

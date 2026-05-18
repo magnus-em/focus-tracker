@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import Combine
+import UserNotifications
 
 #if canImport(UIKit)
 import UIKit
@@ -80,6 +81,7 @@ public final class FocusTimerEngine: ObservableObject {
         self.timeRemaining = settings.workMinutes * 60
         recoverPartialSession()
         recomputeTodayCount()
+        requestNotificationPermission()
 
         #if canImport(UIKit)
         // Resume / refresh state when the app comes back from background.
@@ -90,6 +92,35 @@ public final class FocusTimerEngine: ObservableObject {
             Task { @MainActor in self?.didBecomeActive() }
         }
         #endif
+    }
+
+    // MARK: - Notifications
+
+    private static let notifIdentifier = "focusTimerCompletion"
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    /// Schedule a local notification at the expected completion moment so the
+    /// user hears the bell even if the app is backgrounded or the screen is off.
+    private func scheduleCompletionNotification() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.notifIdentifier])
+        guard timeRemaining > 1 else { return }
+        let content = UNMutableNotificationContent()
+        content.title = phase == .work ? "Focus complete" : "Break over"
+        content.body = phase == .work
+            ? "Session finished — \(Int(settings.breakMinutes)) min break ready when you are."
+            : "Back to focus."
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: timeRemaining, repeats: false)
+        let req = UNNotificationRequest(identifier: Self.notifIdentifier, content: content, trigger: trigger)
+        center.add(req)
+    }
+
+    private func cancelCompletionNotification() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.notifIdentifier])
     }
 
     // MARK: - Computed
@@ -117,6 +148,7 @@ public final class FocusTimerEngine: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in self?.tick() }
         saveCheckpoint()
+        scheduleCompletionNotification()
     }
 
     public func pause() {
@@ -127,6 +159,7 @@ public final class FocusTimerEngine: ObservableObject {
         isRunning = false
         ticker?.cancel(); ticker = nil
         saveCheckpoint()
+        cancelCompletionNotification()
     }
 
     public func toggleRunPause() {
@@ -161,6 +194,7 @@ public final class FocusTimerEngine: ObservableObject {
         guard newRemaining > 5 else { completePhase(); return }
         totalTime = max(60, totalTime + minutes * 60)
         timeRemaining = newRemaining
+        if isRunning { scheduleCompletionNotification() }
     }
 
     /// Take-a-break from idle (or interrupting work) — saves partial work
@@ -243,6 +277,7 @@ public final class FocusTimerEngine: ObservableObject {
     private func finalize(saveAsCompleted: Bool, minBreakMinutes: Double = 1.0) {
         ticker?.cancel(); ticker = nil
         isRunning = false
+        cancelCompletionNotification()
         let elapsed = currentElapsedSeconds
 
         if let start = sessionStartTime {
