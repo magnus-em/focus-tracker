@@ -235,8 +235,15 @@ struct iPadTimelineCanvas: View {
         let color: Color
     }
 
+    private struct LaidOut: Identifiable {
+        let id = UUID()
+        let block: Block
+        let lane: Int
+        let totalLanes: Int
+    }
+
     private var blocks: [Block] {
-        focus.map { Block(
+        let all = focus.map { Block(
             start: $0.startTime,
             end: $0.startTime.addingTimeInterval($0.durationMinutes * 60),
             label: $0.label ?? "Focus",
@@ -250,6 +257,49 @@ struct iPadTimelineCanvas: View {
                 color: FocusColors.breakBlue
             )
         }
+        return all.sorted { $0.start < $1.start }
+    }
+
+    /// Lane assignment for overlapping blocks — see DashboardView for full
+    /// explanation. Renders overlapping sessions side-by-side in columns.
+    private var laidOut: [LaidOut] {
+        let sorted = blocks
+        var assignments: [(block: Block, lane: Int)] = []
+        var laneEnds: [Date] = []
+        for b in sorted {
+            var lane = -1
+            for (i, e) in laneEnds.enumerated() where e <= b.start {
+                lane = i; break
+            }
+            if lane == -1 {
+                lane = laneEnds.count
+                laneEnds.append(b.end)
+            } else {
+                laneEnds[lane] = b.end
+            }
+            assignments.append((b, lane))
+        }
+        var result: [LaidOut] = []
+        var cluster: [(Block, Int)] = []
+        var clusterEnd: Date? = nil
+        let flush: ([(Block, Int)]) -> Void = { items in
+            let total = (items.map(\.1).max() ?? 0) + 1
+            for (blk, lane) in items {
+                result.append(LaidOut(block: blk, lane: lane, totalLanes: total))
+            }
+        }
+        for item in assignments {
+            if let ce = clusterEnd, item.block.start < ce {
+                cluster.append(item)
+                clusterEnd = max(ce, item.block.end)
+            } else {
+                if !cluster.isEmpty { flush(cluster) }
+                cluster = [item]
+                clusterEnd = item.block.end
+            }
+        }
+        if !cluster.isEmpty { flush(cluster) }
+        return result
     }
 
     private var hourRange: (start: Int, end: Int) {
@@ -282,8 +332,8 @@ struct iPadTimelineCanvas: View {
             GeometryReader { geo in
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(Color.secondary.opacity(0.05)).cornerRadius(6)
-                    ForEach(blocks) { b in
-                        blockView(b, range: range, totalHeight: height, width: geo.size.width)
+                    ForEach(laidOut) { item in
+                        blockView(item, range: range, totalHeight: height, width: geo.size.width)
                     }
                 }
             }
@@ -291,7 +341,8 @@ struct iPadTimelineCanvas: View {
         }
     }
 
-    private func blockView(_ b: Block, range: (start: Int, end: Int), totalHeight: CGFloat, width: CGFloat) -> some View {
+    private func blockView(_ item: LaidOut, range: (start: Int, end: Int), totalHeight: CGFloat, width: CGFloat) -> some View {
+        let b = item.block
         let totalSec = Double(range.end - range.start) * 3600.0
         let cal = Calendar.current
         let rangeStart = cal.date(bySettingHour: range.start, minute: 0, second: 0, of: day)!
@@ -299,6 +350,9 @@ struct iPadTimelineCanvas: View {
         let duration = b.end.timeIntervalSince(b.start)
         let y = max(0, CGFloat(startOffset / totalSec) * totalHeight)
         let h = max(10, CGFloat(duration / totalSec) * totalHeight)
+        let gutter: CGFloat = item.totalLanes > 1 ? 3 : 0
+        let laneWidth = (width - gutter * CGFloat(item.totalLanes - 1)) / CGFloat(item.totalLanes)
+        let x = CGFloat(item.lane) * (laneWidth + gutter)
         return HStack(spacing: 0) {
             Text(b.label)
                 .font(.system(size: 10, weight: .semibold))
@@ -307,9 +361,9 @@ struct iPadTimelineCanvas: View {
                 .padding(.horizontal, 6)
             Spacer(minLength: 0)
         }
-        .frame(width: width, height: h)
+        .frame(width: laneWidth, height: h)
         .background(RoundedRectangle(cornerRadius: 4).fill(b.color.opacity(0.85)))
-        .offset(y: y)
+        .offset(x: x, y: y)
     }
 
     private func hourLabel(_ h: Int) -> String {

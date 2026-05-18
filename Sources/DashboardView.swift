@@ -1425,6 +1425,12 @@ private struct DayTimelineCanvas: View {
         let isLive: Bool
     }
 
+    private struct LaidOut {
+        let block: Block
+        let lane: Int
+        let totalLanes: Int
+    }
+
     private var blocks: [Block] {
         var out: [Block] = []
         for s in focus {
@@ -1465,6 +1471,52 @@ private struct DayTimelineCanvas: View {
             ))
         }
         return out.sorted { $0.start < $1.start }
+    }
+
+    /// Standard calendar-style lane assignment: overlapping blocks get
+    /// horizontal columns. A block's `totalLanes` is the column count for
+    /// its conflict cluster (a maximal chain of transitively-overlapping
+    /// blocks). Renders side-by-side instead of Z-stacked.
+    private var laidOut: [LaidOut] {
+        let sorted = blocks
+        var assignments: [(block: Block, lane: Int)] = []
+        var laneEnds: [Date] = []
+
+        for b in sorted {
+            var lane = -1
+            for (i, e) in laneEnds.enumerated() where e <= b.start {
+                lane = i; break
+            }
+            if lane == -1 {
+                lane = laneEnds.count
+                laneEnds.append(b.end)
+            } else {
+                laneEnds[lane] = b.end
+            }
+            assignments.append((b, lane))
+        }
+
+        var result: [LaidOut] = []
+        var cluster: [(Block, Int)] = []
+        var clusterEnd: Date? = nil
+        let flush: ([(Block, Int)]) -> Void = { items in
+            let total = (items.map(\.1).max() ?? 0) + 1
+            for (blk, lane) in items {
+                result.append(LaidOut(block: blk, lane: lane, totalLanes: total))
+            }
+        }
+        for item in assignments {
+            if let ce = clusterEnd, item.block.start < ce {
+                cluster.append(item)
+                clusterEnd = max(ce, item.block.end)
+            } else {
+                if !cluster.isEmpty { flush(cluster) }
+                cluster = [item]
+                clusterEnd = item.block.end
+            }
+        }
+        if !cluster.isEmpty { flush(cluster) }
+        return result
     }
 
     private var hourRange: (start: Int, end: Int) {
@@ -1513,8 +1565,8 @@ private struct DayTimelineCanvas: View {
                 .cornerRadius(4)
 
                 GeometryReader { geo in
-                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
-                        block(b, range: range, totalHeight: height, width: geo.size.width)
+                    ForEach(Array(laidOut.enumerated()), id: \.offset) { _, item in
+                        block(item, range: range, totalHeight: height, width: geo.size.width)
                     }
                 }
                 .frame(height: height)
@@ -1522,7 +1574,8 @@ private struct DayTimelineCanvas: View {
         }
     }
 
-    private func block(_ b: Block, range: (start: Int, end: Int), totalHeight: CGFloat, width: CGFloat) -> some View {
+    private func block(_ item: LaidOut, range: (start: Int, end: Int), totalHeight: CGFloat, width: CGFloat) -> some View {
+        let b = item.block
         let totalSeconds = Double(range.end - range.start) * 3600.0
         let cal = Calendar.current
         let rangeStartDate = cal.date(bySettingHour: range.start, minute: 0, second: 0, of: day)!
@@ -1531,28 +1584,31 @@ private struct DayTimelineCanvas: View {
         let y = max(0, CGFloat(startOffset / totalSeconds) * totalHeight)
         let h = max(8, CGFloat(duration / totalSeconds) * totalHeight)
 
-        return HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(b.color.opacity(b.isLive ? 0.85 : 0.75))
-                .overlay(
-                    HStack(spacing: 4) {
-                        Text(b.label)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white)
+        // Lane-based column. Leaves a small gutter between concurrent blocks.
+        let gutter: CGFloat = item.totalLanes > 1 ? 2 : 0
+        let laneWidth = (width - gutter * CGFloat(item.totalLanes - 1)) / CGFloat(item.totalLanes)
+        let x = CGFloat(item.lane) * (laneWidth + gutter)
+
+        return RoundedRectangle(cornerRadius: 4)
+            .fill(b.color.opacity(b.isLive ? 0.85 : 0.75))
+            .overlay(
+                HStack(spacing: 4) {
+                    Text(b.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    if let sub = b.subtitle, h >= 18, item.totalLanes <= 2 {
+                        Text("· \(sub)")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1)
-                        if let sub = b.subtitle, h >= 18 {
-                            Text("· \(sub)")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .lineLimit(1)
-                        }
-                        Spacer()
                     }
-                    .padding(.horizontal, 5)
-                )
-        }
-        .frame(width: width, height: h)
-        .offset(y: y)
+                    Spacer()
+                }
+                .padding(.horizontal, 5)
+            )
+            .frame(width: laneWidth, height: h)
+            .offset(x: x, y: y)
     }
 
     private func hourLabel(_ h: Int) -> String {
