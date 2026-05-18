@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var timer: TimerManager
     @ObservedObject var store: SessionStore
     var openOnboarding: (() -> Void)? = nil
+    @Environment(\.modelContext) private var modelContext
     @State private var showResetConfirm = false
     @State private var newSourceText = ""
     @State private var cloudStatus: String = "checking…"
@@ -326,6 +327,25 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     .animation(.easeInOut(duration: 0.2), value: manualLogged)
                 }
+
+                Divider()
+
+                SectionLabel("DATA")
+                Button {
+                    DataExport.showSavePanel(container: modelContext.container)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Export Snapshot (JSON)").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.secondary.opacity(0.06))
+                    .cornerRadius(7)
+                }
+                .buttonStyle(.plain)
 
                 Divider()
 

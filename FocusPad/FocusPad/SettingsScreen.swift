@@ -15,6 +15,10 @@ struct SettingsScreen: View {
     @State private var cloudDetail: String = ""
     @State private var exportURL: URL? = nil
     @State private var showExportShare = false
+    @State private var manualMinutes: Int = 60
+    @State private var manualDate: Date = Date()
+    @State private var manualLabel: String = ""
+    @State private var manualLogged = false
 
     var body: some View {
         Form {
@@ -179,6 +183,48 @@ struct SettingsScreen: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             .onAppear { forceSyncProbe() }
+
+            Section("Log Manual Session") {
+                Stepper(value: $manualMinutes, in: 1...480, step: 5) {
+                    HStack {
+                        Text("Duration")
+                        Spacer()
+                        Text("\(manualMinutes) min").foregroundStyle(.secondary)
+                    }
+                }
+                DatePicker("Date", selection: $manualDate, in: ...Date(), displayedComponents: .date)
+                if !settings.tags.isEmpty {
+                    Picker("Tag", selection: $manualLabel) {
+                        Text("None").tag("")
+                        ForEach(settings.tags, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+                Button {
+                    let startTime = Calendar.current.startOfDay(for: manualDate)
+                    let session = WorkSession(
+                        startTime: startTime,
+                        durationMinutes: Double(manualMinutes),
+                        type: .work,
+                        label: manualLabel.isEmpty ? nil : manualLabel
+                    )
+                    context.insert(StoredWorkSession(value: session))
+                    try? context.save()
+                    Haptics.success()
+                    manualLogged = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { manualLogged = false }
+                } label: {
+                    HStack(spacing: 6) {
+                        if manualLogged {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("Logged!")
+                        } else {
+                            Image(systemName: "plus.circle.fill")
+                            Text("Log \(manualMinutes) min session")
+                        }
+                    }
+                    .foregroundStyle(manualLogged ? FocusColors.goalGreen : FocusColors.focusRed)
+                }
+            }
 
             Section("Data") {
                 Button {

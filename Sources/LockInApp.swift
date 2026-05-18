@@ -117,6 +117,7 @@ struct FocusApp: App {
                     onboardingController.open(settings: settings)
                 }
             )
+            .modelContainer(focusContainer)
         } label: {
             if timerManager.isActive {
                 Text(timerManager.menuBarTimeText)
