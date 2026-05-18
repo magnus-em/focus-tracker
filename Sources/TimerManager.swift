@@ -37,6 +37,22 @@ class TimerManager: ObservableObject {
     var sessionStore: SessionStore?
     var settings: AppSettings? { didSet { observeSettingsChanges() } }
 
+    /// Cross-device live-timer sync. Set externally after init.
+    var stateSync: TimerStateSync? {
+        didSet {
+            stateSync?.onRemoteChange = { [weak self] state in
+                self?.applyRemoteState(state)
+            }
+            // On launch, adopt any remote running timer.
+            if let s = stateSync?.currentState(),
+               s.deviceID != stateSync?.deviceID,
+               s.phase != StoredTimerState.Phase.idle {
+                applyRemoteState(s)
+            }
+        }
+    }
+    private var ignoreRemoteUntil: Date = .distantPast
+
     private var workDuration: TimeInterval { (settings?.workMinutes ?? 25) * 60 }
     private var breakDuration: TimeInterval { (settings?.shortBreakMinutes ?? 10) * 60 }
 
@@ -110,6 +126,7 @@ class TimerManager: ObservableObject {
             .sink { [weak self] _ in self?.tick() }
         updateBlocking()
         saveCheckpoint()
+        pushSharedState()
     }
 
     func pause() {
@@ -123,6 +140,83 @@ class TimerManager: ObservableObject {
         saveCheckpoint()
         if currentPhase == .work && sessionStartTime != nil {
             startPauseGrace()
+        }
+        pushSharedState()
+    }
+
+    // MARK: - Cross-device state sync
+
+    private func pushSharedState() {
+        guard let stateSync else { return }
+        ignoreRemoteUntil = Date().addingTimeInterval(3.0)
+        let sharedPhase: StoredTimerState.Phase
+        switch currentPhase {
+        case .work:       sharedPhase = isActive ? .work : .idle
+        case .shortBreak, .longBreak:
+            sharedPhase = isActive ? .breakPhase : .idle
+        }
+        let label = currentLabel
+        let kinds = currentBreakKinds
+        let start = sessionStartTime
+        let total = totalTime
+        let isRun = isRunning
+        let remaining = timeRemaining
+        stateSync.push { state in
+            state.phase = sharedPhase
+            state.isRunning = isRun
+            state.totalSeconds = total
+            state.label = label
+            state.breakKindsRaw = kinds.map(\.rawValue)
+            state.startTime = start
+            if isRun {
+                state.endTime = Date().addingTimeInterval(remaining)
+                state.remainingSeconds = remaining
+            } else {
+                state.endTime = nil
+                state.remainingSeconds = remaining
+            }
+        }
+    }
+
+    private func applyRemoteState(_ state: StoredTimerState) {
+        guard Date() > ignoreRemoteUntil else { return }
+        let remotePhase = state.phase
+        if remotePhase == .idle {
+            timer?.cancel(); timer = nil
+            isRunning = false
+            elapsedBeforePause = 0
+            lastResumeTime = nil
+            sessionStartTime = nil
+            currentPhase = .work
+            currentLabel = ""
+            currentBreakKinds = []
+            setTimeForCurrentPhase()
+            unblockIfNeeded()
+            return
+        }
+        currentPhase = (remotePhase == .work) ? .work : .shortBreak
+        totalTime = state.totalSeconds
+        currentLabel = state.label
+        currentBreakKinds = state.breakKinds
+        sessionStartTime = state.startTime
+        if state.isRunning, let end = state.endTime {
+            let remaining = max(0, end.timeIntervalSinceNow)
+            timeRemaining = remaining
+            elapsedBeforePause = totalTime - remaining
+            lastResumeTime = Date()
+            isRunning = true
+            timer?.cancel()
+            tickCount = 0
+            timer = Timer.publish(every: 0.5, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in self?.tick() }
+            updateBlocking()
+        } else {
+            timeRemaining = state.remainingSeconds
+            elapsedBeforePause = totalTime - state.remainingSeconds
+            lastResumeTime = nil
+            isRunning = false
+            timer?.cancel(); timer = nil
         }
     }
 
@@ -161,6 +255,7 @@ class TimerManager: ObservableObject {
         currentPhase = .work
         setTimeForCurrentPhase()
         unblockIfNeeded()
+        stateSync?.pushIdle()
     }
 
     func skip() {
@@ -192,6 +287,7 @@ class TimerManager: ObservableObject {
         currentPhase = .work
         setTimeForCurrentPhase()
         updateBlocking()
+        stateSync?.pushIdle()
     }
 
     func startManualBreak(minutes: Double, kinds: [BreakKind] = []) {

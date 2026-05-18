@@ -196,6 +196,58 @@ public final class StoredScratchItem {
     }
 }
 
+/// Shared live-timer state. There's at most one of these — both Mac and iPad
+/// read + write the same record so they can mirror the running timer.
+///
+/// "Anchored time" model: when the timer is running, `endTime` is when it
+/// would naturally complete; remaining is computed from wall clock.
+/// When paused, `remainingSeconds` holds the value at pause moment.
+/// `updatedAt` is the conflict-resolution tiebreaker (last write wins).
+@Model
+public final class StoredTimerState {
+    /// Single owner-scoped ID so SwiftData treats it as one record.
+    public var id: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    /// "idle" | "work" | "breakPhase"
+    public var phaseRaw: String = "idle"
+    public var isRunning: Bool = false
+    /// Wall-clock moment the running timer would complete. Nil when paused/idle.
+    public var endTime: Date? = nil
+    /// Remaining seconds when paused. Ignored when running.
+    public var remainingSeconds: Double = 0
+    public var totalSeconds: Double = 0
+    public var label: String = ""
+    public var breakKindsRaw: [String] = []
+    /// Wall-clock moment the timer originally started (kept as session-start for save).
+    public var startTime: Date? = nil
+    public var updatedAt: Date = Date()
+    /// Which device authored the most recent update — used to avoid feedback loops.
+    public var deviceID: String = ""
+
+    public init() {}
+
+    public enum Phase: String, Sendable {
+        case idle, work, breakPhase
+    }
+
+    public var phase: Phase {
+        get { Phase(rawValue: phaseRaw) ?? .idle }
+        set { phaseRaw = newValue.rawValue }
+    }
+
+    public var breakKinds: [BreakKind] {
+        get { breakKindsRaw.compactMap { BreakKind(rawValue: $0) } }
+        set { breakKindsRaw = newValue.map(\.rawValue) }
+    }
+
+    /// Remaining seconds, computed from anchor if running.
+    public var liveRemaining: TimeInterval {
+        if isRunning, let end = endTime {
+            return max(0, end.timeIntervalSinceNow)
+        }
+        return max(0, remainingSeconds)
+    }
+}
+
 // MARK: - Schema
 
 public enum FocusSchema {
@@ -205,5 +257,6 @@ public enum FocusSchema {
         StoredHomework.self,
         StoredDayRecord.self,
         StoredScratchItem.self,
+        StoredTimerState.self,
     ]
 }

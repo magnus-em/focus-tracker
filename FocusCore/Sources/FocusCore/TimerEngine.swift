@@ -71,6 +71,7 @@ public final class FocusTimerEngine: ObservableObject {
     /// refresh in time.
     private var context: ModelContext { container.mainContext }
     private var ticker: AnyCancellable?
+    public let stateSync: TimerStateSync
     private var sessionStartTime: Date?
     private var elapsedBeforePause: TimeInterval = 0
     private var lastResumeTime: Date?
@@ -83,9 +84,21 @@ public final class FocusTimerEngine: ObservableObject {
         self.settings = settings
         self.totalTime = settings.workMinutes * 60
         self.timeRemaining = settings.workMinutes * 60
+        self.stateSync = TimerStateSync(container: container)
         recoverPartialSession()
         recomputeTodayCount()
         requestNotificationPermission()
+
+        // Listen for remote changes from other devices.
+        stateSync.onRemoteChange = { [weak self] state in
+            self?.applyRemoteState(state)
+        }
+        // On launch, if a remote timer is already running, adopt it.
+        if let s = stateSync.currentState(),
+           s.deviceID != stateSync.deviceID,
+           s.phase != StoredTimerState.Phase.idle {
+            applyRemoteState(s)
+        }
 
         #if canImport(UIKit)
         // Resume / refresh state when the app comes back from background.
@@ -153,6 +166,7 @@ public final class FocusTimerEngine: ObservableObject {
             .sink { [weak self] _ in self?.tick() }
         saveCheckpoint()
         scheduleCompletionNotification()
+        pushSharedState()
     }
 
     public func pause() {
@@ -164,6 +178,93 @@ public final class FocusTimerEngine: ObservableObject {
         ticker?.cancel(); ticker = nil
         saveCheckpoint()
         cancelCompletionNotification()
+        pushSharedState()
+    }
+
+    // MARK: - Cross-device state sync
+
+    private var ignoreRemoteUntil: Date = .distantPast
+
+    private func pushSharedState() {
+        ignoreRemoteUntil = Date().addingTimeInterval(3.0)  // ignore round-trip for 3s
+        let sharedPhase: StoredTimerState.Phase
+        switch phase {
+        case .work:       sharedPhase = isActive ? .work : .idle
+        case .breakPhase: sharedPhase = isActive ? .breakPhase : .idle
+        }
+        let kinds = currentBreakKinds
+        let label = currentLabel
+        let start = sessionStartTime
+        let total = totalTime
+        let isRun = isRunning
+        let remaining = timeRemaining
+
+        stateSync.push { state in
+            state.phase = sharedPhase
+            state.isRunning = isRun
+            state.totalSeconds = total
+            state.label = label
+            state.breakKindsRaw = kinds.map(\.rawValue)
+            state.startTime = start
+            if isRun {
+                state.endTime = Date().addingTimeInterval(remaining)
+                state.remainingSeconds = remaining
+            } else {
+                state.endTime = nil
+                state.remainingSeconds = remaining
+            }
+        }
+    }
+
+    private func applyRemoteState(_ state: StoredTimerState) {
+        // Avoid bouncing our own update back to us.
+        guard Date() > ignoreRemoteUntil else { return }
+
+        let remotePhase = state.phase
+        if remotePhase == .idle {
+            // Remote stopped — stop locally without saving (we trust remote to have saved).
+            ticker?.cancel(); ticker = nil
+            isRunning = false
+            elapsedBeforePause = 0
+            lastResumeTime = nil
+            sessionStartTime = nil
+            elapsedSeconds = 0
+            phase = .work
+            totalTime = settings.workMinutes * 60
+            timeRemaining = totalTime
+            currentLabel = ""
+            currentBreakKinds = []
+            cancelCompletionNotification()
+            return
+        }
+
+        // Mirror state.
+        phase = (remotePhase == .work) ? .work : .breakPhase
+        totalTime = state.totalSeconds
+        currentLabel = state.label
+        currentBreakKinds = state.breakKinds
+        sessionStartTime = state.startTime
+
+        if state.isRunning, let end = state.endTime {
+            let remaining = max(0, end.timeIntervalSinceNow)
+            timeRemaining = remaining
+            elapsedBeforePause = totalTime - remaining
+            lastResumeTime = Date()
+            isRunning = true
+            ticker?.cancel()
+            ticker = Timer.publish(every: 0.5, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in self?.tick() }
+            scheduleCompletionNotification()
+        } else {
+            // Paused remotely
+            timeRemaining = state.remainingSeconds
+            elapsedBeforePause = totalTime - state.remainingSeconds
+            lastResumeTime = nil
+            isRunning = false
+            ticker?.cancel(); ticker = nil
+            cancelCompletionNotification()
+        }
     }
 
     public func toggleRunPause() {
@@ -190,6 +291,7 @@ public final class FocusTimerEngine: ObservableObject {
         guard !isActive else { return }
         totalTime = minutes * 60
         timeRemaining = minutes * 60
+        // No push here — idle preset change is local until Start.
     }
 
     /// Mid-session ±N minute nudge.
@@ -199,6 +301,7 @@ public final class FocusTimerEngine: ObservableObject {
         totalTime = max(60, totalTime + minutes * 60)
         timeRemaining = newRemaining
         if isRunning { scheduleCompletionNotification() }
+        pushSharedState()
     }
 
     /// Take-a-break from idle (or interrupting work) — saves partial work
@@ -220,6 +323,7 @@ public final class FocusTimerEngine: ObservableObject {
         totalTime = minutes * 60
         timeRemaining = totalTime
         start()
+        // start() already pushes state
     }
 
     // MARK: - Private machinery
@@ -241,6 +345,7 @@ public final class FocusTimerEngine: ObservableObject {
     private func completePhase() {
         ticker?.cancel(); ticker = nil
         isRunning = false
+        stateSync.pushIdle()
 
         if let start = sessionStartTime {
             let type: WorkSession.SessionType = phase == .work ? .work : .shortBreak
@@ -282,6 +387,7 @@ public final class FocusTimerEngine: ObservableObject {
         ticker?.cancel(); ticker = nil
         isRunning = false
         cancelCompletionNotification()
+        stateSync.pushIdle()
         let elapsed = currentElapsedSeconds
 
         if let start = sessionStartTime {
