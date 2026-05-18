@@ -233,15 +233,8 @@ struct SettingsScreen: View {
                 switch status {
                 case .available:
                     self.cloudStatus = "Signed in"
-                    self.cloudDetail = "Container: \(FocusModelContainer.cloudKitContainerID). If iPad doesn't show Mac data, check that QUIC/UDP isn't blocked on your network — CloudKit prefers HTTP/3."
-                    // Nudge SwiftData by touching a record.
-                    let probe = StoredScratchItem()
-                    probe.text = "__sync_probe__"
-                    probe.order = -999
-                    self.context.insert(probe)
-                    try? self.context.save()
-                    self.context.delete(probe)
-                    try? self.context.save()
+                    self.cloudDetail = "Container: \(FocusModelContainer.cloudKitContainerID)\nProbing zone access…"
+                    self.probeZoneAccess(container: container)
                 case .noAccount:
                     self.cloudStatus = "Not signed in"
                     self.cloudDetail = "Sign into iCloud in Settings → Apple ID."
@@ -259,6 +252,41 @@ struct SettingsScreen: View {
                 }
             }
         }
+    }
+
+    /// Talk to the private database directly to surface the real CKError
+    /// the server returns. If it says "Invalid bundle ID for container",
+    /// CloudKit container isn't associated with this bundle ID at Apple's
+    /// developer portal — see SETUP_CLOUDKIT.md.
+    private func probeZoneAccess(container: CKContainer) {
+        let db = container.privateCloudDatabase
+        let op = CKFetchRecordZonesOperation.fetchAllRecordZonesOperation()
+        op.fetchRecordZonesResultBlock = { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.cloudStatus = "Working ✓"
+                    self.cloudDetail = "Sync is healthy. Changes propagate automatically."
+                case .failure(let err):
+                    if let ck = err as? CKError {
+                        let serverMessage = ck.userInfo["ServerErrorDescription"] as? String ?? ""
+                        let code = ck.code.rawValue
+                        self.cloudStatus = "Setup needed"
+                        if serverMessage.contains("Invalid bundle ID") {
+                            self.cloudDetail = "Server: \(serverMessage)\n\nThe CloudKit container isn't associated with this app's bundle ID at Apple Developer Portal. See SETUP_CLOUDKIT.md in the repo for the 1-minute fix."
+                        } else if !serverMessage.isEmpty {
+                            self.cloudDetail = "Server: \(serverMessage) (code \(code))"
+                        } else {
+                            self.cloudDetail = "CKError \(code): \(err.localizedDescription)"
+                        }
+                    } else {
+                        self.cloudStatus = "Error"
+                        self.cloudDetail = err.localizedDescription
+                    }
+                }
+            }
+        }
+        db.add(op)
     }
 
     private func clearAllData() {
