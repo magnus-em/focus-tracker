@@ -6,6 +6,17 @@ struct HomeworkScreen: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \StoredHomework.date, order: .reverse) private var items: [StoredHomework]
     @State private var showAdd = false
+    @State private var searchText = ""
+
+    private var filteredItems: [StoredHomework] {
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return items }
+        return items.filter { h in
+            h.title.lowercased().contains(q)
+                || h.source.lowercased().contains(q)
+                || h.notes.lowercased().contains(q)
+        }
+    }
 
     var body: some View {
         Group {
@@ -17,7 +28,7 @@ struct HomeworkScreen: View {
                 )
             } else {
                 List {
-                    ForEach(items) { h in
+                    ForEach(filteredItems) { h in
                         NavigationLink {
                             HomeworkDetailScreen(homework: h)
                         } label: {
@@ -31,9 +42,10 @@ struct HomeworkScreen: View {
         }
         .navigationTitle("Homework")
         .navigationBarTitleDisplayMode(.large)
+        .searchable(text: $searchText, prompt: "Search homework")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { showAdd = true } label: { Image(systemName: "plus") }
+                Button { Haptics.tap(); showAdd = true } label: { Image(systemName: "plus") }
             }
         }
         .sheet(isPresented: $showAdd) { AddHomeworkSheet() }
@@ -41,7 +53,8 @@ struct HomeworkScreen: View {
     }
 
     private func delete(at offsets: IndexSet) {
-        for i in offsets { context.delete(items[i]) }
+        let arr = filteredItems
+        for i in offsets { context.delete(arr[i]) }
         try? context.save()
     }
 }

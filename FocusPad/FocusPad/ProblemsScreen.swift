@@ -10,6 +10,7 @@ struct ProblemsScreen: View {
     @State private var showAdd = false
     @State private var filterDomain: ProblemDomain? = nil
     @State private var showReviewOnly = false
+    @State private var searchText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,9 +20,10 @@ struct ProblemsScreen: View {
         }
         .navigationTitle("Problems")
         .navigationBarTitleDisplayMode(.large)
+        .searchable(text: $searchText, prompt: "Search problems")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { showAdd = true } label: { Image(systemName: "plus") }
+                Button { Haptics.tap(); showAdd = true } label: { Image(systemName: "plus") }
             }
         }
         .sheet(isPresented: $showAdd) { AddProblemSheet() }
@@ -152,6 +154,15 @@ struct ProblemsScreen: View {
         var arr = problems
         if let f = filterDomain { arr = arr.filter { $0.domain == f } }
         if showReviewOnly { arr = arr.filter { $0.asValue.isDueForReview } }
+        let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        if !q.isEmpty {
+            arr = arr.filter { p in
+                p.title.lowercased().contains(q)
+                    || p.source.lowercased().contains(q)
+                    || p.notes.lowercased().contains(q)
+                    || p.categories.contains { $0.lowercased().contains(q) }
+            }
+        }
         return arr
     }
 

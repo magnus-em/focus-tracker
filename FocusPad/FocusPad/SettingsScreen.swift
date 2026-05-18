@@ -13,6 +13,8 @@ struct SettingsScreen: View {
     @State private var showInterviewPicker = false
     @State private var cloudStatus: String = "checking…"
     @State private var cloudDetail: String = ""
+    @State private var exportURL: URL? = nil
+    @State private var showExportShare = false
 
     var body: some View {
         Form {
@@ -178,10 +180,28 @@ struct SettingsScreen: View {
             }
             .onAppear { forceSyncProbe() }
 
+            Section("Data") {
+                Button {
+                    do {
+                        let url = try DataExport.makeSnapshotURL(context: context)
+                        exportURL = url
+                        showExportShare = true
+                        Haptics.success()
+                    } catch {
+                        Haptics.warning()
+                    }
+                } label: {
+                    Label("Export Snapshot (JSON)", systemImage: "square.and.arrow.up")
+                }
+            }
+
             Section("Danger Zone") {
                 Button(role: .destructive) { clearAllData() } label: {
                     Label("Clear All Local Data", systemImage: "trash")
                 }
+            }
+            .sheet(isPresented: $showExportShare) {
+                if let url = exportURL { ShareSheet(items: [url]) }
             }
 
             Section {
