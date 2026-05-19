@@ -49,16 +49,35 @@ cat > "$APP_DIR/Info.plist" <<'EOF'
 </plist>
 EOF
 
-# Re-sign with the iCloud entitlements. Prefers a Developer ID certificate
-# (for distribution); falls back to Apple Development (works on your own
-# machines, which is what we need for CloudKit testing).
+# Embed the Mac provisioning profile (required because the entitlements
+# request iCloud + CloudKit, which is a restricted entitlement). Xcode
+# auto-generates this profile the first time the project is opened.
+PROFILE="build/DerivedData/Build/Products/Debug/Focus.app/Contents/embedded.provisionprofile"
+if [ -f "$PROFILE" ]; then
+    cp "$PROFILE" "$APP_DIR/embedded.provisionprofile"
+fi
+
+# Re-sign with the iCloud entitlements. We need the cert from team
+# MUR9TJXP6S (Magnus Melbourne / Yale account) — that's the team the
+# iCloud container is associated with. The gmail-account cert sits in
+# team 6PCPURKU8T which can't use the container.
 SIGN_IDENTITY="${FOCUS_SIGN_IDENTITY:-}"
 if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
 fi
 if [ -z "$SIGN_IDENTITY" ]; then
+    SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development: Magnus Melbourne" | head -1 | sed -E 's/.*"(.*)"/\1/')
+fi
+if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -1 | sed -E 's/.*"(.*)"/\1/')
 fi
+
+# Strip xattrs that iCloud Drive adds to files under ~/Documents — they
+# break codesigning with "resource fork ... not allowed".
+ditto --norsrc --noextattr --noacl Focus.app /tmp/Focus.app.staged
+rm -rf Focus.app
+mv /tmp/Focus.app.staged Focus.app
+
 if [ -n "$SIGN_IDENTITY" ]; then
     echo "Signing with: $SIGN_IDENTITY"
     codesign --force --deep --sign "$SIGN_IDENTITY" --entitlements Focus.entitlements --options runtime Focus.app
