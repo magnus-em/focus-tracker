@@ -9,6 +9,7 @@ struct DashboardScreen: View {
 
     @Query(sort: \StoredWorkSession.startTime, order: .reverse) private var sessions: [StoredWorkSession]
     @Query(sort: \StoredProblem.date, order: .reverse) private var problems: [StoredProblem]
+    @Query(sort: \StoredHomework.date, order: .reverse) private var homework: [StoredHomework]
 
     var body: some View {
         ScrollView {
@@ -17,6 +18,7 @@ struct DashboardScreen: View {
                 personalBestBanner
                 ringsCard
                 momentumCards
+                homeworkCard
                 streakCard
                 weeklySummaryCard
                 focusByTagCard
@@ -231,6 +233,72 @@ struct DashboardScreen: View {
                       label: "STREAK", icon: "bolt.fill",
                       tint: .orange,
                       trailing: bestStreak > 0 ? "best \(bestStreak)" : nil)
+        }
+    }
+
+    private var homeworkCard: some View {
+        let cal = Calendar.current
+        let todayCount = homework.filter { cal.isDateInToday($0.date) }.count
+        let goal = settings.homeworkDailyGoal
+        let pct: Double = goal > 0 ? min(1.0, Double(todayCount) / Double(goal)) : 0
+        let purple = Color(red: 0.62, green: 0.45, blue: 0.92)
+        let hit = goal > 0 && todayCount >= goal
+
+        // Last 14 days mini bars
+        let today = cal.startOfDay(for: Date())
+        let days: [(Date, Int)] = (0..<14).reversed().map { i in
+            let d = cal.date(byAdding: .day, value: -i, to: today)!
+            let n = homework.filter { cal.isDate($0.date, inSameDayAs: d) }.count
+            return (d, n)
+        }
+        let maxN = max(goal, days.map(\.1).max() ?? 0, 1)
+
+        return PadCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    PadSectionHeader(title: "HOMEWORK")
+                    Spacer()
+                    if goal > 0 {
+                        Text("\(todayCount)/\(goal) today")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(hit ? Color.green : purple)
+                    } else {
+                        Text("\(todayCount) today")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(purple)
+                    }
+                }
+                if goal > 0 {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(purple.opacity(0.12))
+                            Capsule()
+                                .fill(hit ? Color.green : purple)
+                                .frame(width: g.size.width * CGFloat(pct))
+                                .animation(.spring(response: 0.5), value: pct)
+                        }
+                    }
+                    .frame(height: 8)
+                }
+                HStack(alignment: .bottom, spacing: 6) {
+                    ForEach(Array(days.enumerated()), id: \.offset) { _, item in
+                        let (date, n) = item
+                        let pctBar = Double(n) / Double(maxN)
+                        let dayHit = goal > 0 && n >= goal
+                        VStack(spacing: 4) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(n == 0 ? Color.gray.opacity(0.18)
+                                      : dayHit ? Color.green : purple.opacity(0.7))
+                                .frame(height: max(4, CGFloat(pctBar) * 60))
+                                .frame(maxWidth: .infinity)
+                            Text(dayLetter(date))
+                                .font(.system(size: 9, design: .rounded))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .frame(height: 76)
+            }
         }
     }
 

@@ -203,6 +203,12 @@ struct SettingsView: View {
                 }
                 ProblemGoalRow(label: "Quant", daily: $settings.quantGoal, weekly: $settings.quantWeeklyGoal)
                 ProblemGoalRow(label: "SWE", daily: $settings.sweGoal, weekly: $settings.sweWeeklyGoal)
+                HStack {
+                    Text("Homework").font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    InlineIntField(value: $settings.homeworkDailyGoal).frame(width: 72)
+                    Text("—").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 72, alignment: .trailing)
+                }
 
                 Divider()
 

@@ -110,6 +110,9 @@ struct SettingsScreen: View {
                 Stepper(value: $settings.sweWeeklyGoal, in: 0...500) {
                     HStack { Text("SWE weekly"); Spacer(); Text("\(settings.sweWeeklyGoal)").foregroundStyle(.secondary) }
                 }
+                Stepper(value: $settings.homeworkDailyGoal, in: 0...50) {
+                    HStack { Text("Homework daily"); Spacer(); Text("\(settings.homeworkDailyGoal)").foregroundStyle(.secondary) }
+                }
             }
 
             Section("Problem Sources") {

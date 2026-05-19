@@ -44,6 +44,9 @@ final class PadSettings: ObservableObject {
     @Published var sweWeeklyGoal: Int {
         didSet { sd.set(sweWeeklyGoal, forKey: "sweWeeklyGoal") }
     }
+    @Published var homeworkDailyGoal: Int {
+        didSet { sd.set(homeworkDailyGoal, forKey: "homeworkDailyGoal") }
+    }
     @Published var commitmentEnabled: Bool {
         didSet { sd.set(commitmentEnabled, forKey: "commitmentEnabled") }
     }
@@ -85,6 +88,7 @@ final class PadSettings: ObservableObject {
             "quantWeeklyGoal": 0,
             "sweGoal": 0,
             "sweWeeklyGoal": 0,
+            "homeworkDailyGoal": 10,
             "commitmentEnabled": true,
             "cloudKitSyncEnabled": true,
         ])
@@ -101,6 +105,7 @@ final class PadSettings: ObservableObject {
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")
         sweWeeklyGoal = d.integer(forKey: "sweWeeklyGoal")
+        homeworkDailyGoal = d.integer(forKey: "homeworkDailyGoal")
         commitmentEnabled = d.bool(forKey: "commitmentEnabled")
         todayCommitment = d.string(forKey: "todayCommitment") ?? ""
         lastCommitmentDateEpoch = d.double(forKey: "lastCommitmentDateEpoch")
@@ -132,6 +137,7 @@ final class PadSettings: ObservableObject {
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")
         sweWeeklyGoal = d.integer(forKey: "sweWeeklyGoal")
+        homeworkDailyGoal = d.integer(forKey: "homeworkDailyGoal")
         commitmentEnabled = d.bool(forKey: "commitmentEnabled")
         todayCommitment = d.string(forKey: "todayCommitment") ?? todayCommitment
         lastCommitmentDateEpoch = d.double(forKey: "lastCommitmentDateEpoch")

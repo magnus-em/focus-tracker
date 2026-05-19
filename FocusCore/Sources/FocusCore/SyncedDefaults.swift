@@ -38,6 +38,7 @@ public final class SyncedDefaults {
         "quantWeeklyGoal",
         "sweGoal",
         "sweWeeklyGoal",
+        "homeworkDailyGoal",
         "problemSources",
         "interviewDate",
         "commitmentEnabled",

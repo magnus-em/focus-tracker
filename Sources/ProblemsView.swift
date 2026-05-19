@@ -84,6 +84,10 @@ struct ProblemsView: View {
 
     private var homeworkSection: some View {
         let items = homeworkStore.byNewest
+        let cal = Calendar.current
+        let todayCount = items.filter { cal.isDateInToday($0.date) }.count
+        let goal = settings.homeworkDailyGoal
+        let purple = Color(red: 0.62, green: 0.45, blue: 0.92)
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) { homeworkExpanded.toggle() }
@@ -91,13 +95,22 @@ struct ProblemsView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "book")
                         .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(purple)
                     Text("HOMEWORK")
                         .font(.system(size: 10, weight: .bold))
                         .tracking(1)
                         .foregroundStyle(.secondary)
-                    Text("\(items.count)")
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    if goal > 0 {
+                        Text("\(todayCount)/\(goal) today")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(todayCount >= goal ? Color.green : purple)
+                    } else {
+                        Text("\(todayCount) today")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text("· \(items.count) total")
+                        .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.tertiary)
                     Spacer()
                     Button { showHomeworkLog = true } label: {

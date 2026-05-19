@@ -4,9 +4,15 @@ import FocusCore
 
 struct HomeworkScreen: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject var settings: PadSettings
     @Query(sort: \StoredHomework.date, order: .reverse) private var items: [StoredHomework]
     @State private var showAdd = false
     @State private var searchText = ""
+
+    private var todayCount: Int {
+        let cal = Calendar.current
+        return items.filter { cal.isDateInToday($0.date) }.count
+    }
 
     private var filteredItems: [StoredHomework] {
         let q = searchText.trimmingCharacters(in: .whitespaces).lowercased()
@@ -24,18 +30,25 @@ struct HomeworkScreen: View {
                 ContentUnavailableView(
                     "No homework problems",
                     systemImage: "book",
-                    description: Text("Quick capture for side problems to revisit later.")
+                    description: Text("Quick capture for problems you're working through.")
                 )
             } else {
                 List {
-                    ForEach(filteredItems) { h in
-                        NavigationLink {
-                            HomeworkDetailScreen(homework: h)
-                        } label: {
-                            HomeworkRow(item: h)
-                        }
+                    Section {
+                        HomeworkTodayHeader(todayCount: todayCount, goal: settings.homeworkDailyGoal)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+                            .listRowBackground(Color.clear)
                     }
-                    .onDelete(perform: delete)
+                    Section {
+                        ForEach(filteredItems) { h in
+                            NavigationLink {
+                                HomeworkDetailScreen(homework: h)
+                            } label: {
+                                HomeworkRow(item: h)
+                            }
+                        }
+                        .onDelete(perform: delete)
+                    }
                 }
                 .listStyle(.insetGrouped)
             }
@@ -56,6 +69,69 @@ struct HomeworkScreen: View {
         let arr = filteredItems
         for i in offsets { context.delete(arr[i]) }
         try? context.save()
+    }
+}
+
+private struct HomeworkTodayHeader: View {
+    let todayCount: Int
+    let goal: Int
+
+    private var pct: Double {
+        guard goal > 0 else { return 0 }
+        return min(1.0, Double(todayCount) / Double(goal))
+    }
+
+    private var purple: Color { Color(red: 0.62, green: 0.45, blue: 0.92) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("TODAY")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if goal > 0 {
+                    Text("\(todayCount)/\(goal)")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(todayCount >= goal ? Color.green : purple)
+                    + Text(" problems")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(todayCount)")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundStyle(purple)
+                    + Text(" problems")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if goal > 0 {
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(purple.opacity(0.12))
+                        Capsule()
+                            .fill(todayCount >= goal ? Color.green : purple)
+                            .frame(width: g.size.width * CGFloat(pct))
+                            .animation(.spring(response: 0.5), value: pct)
+                    }
+                }
+                .frame(height: 8)
+                if todayCount >= goal {
+                    Text("Goal hit. Bonus problems welcome.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.green)
+                } else {
+                    Text("\(goal - todayCount) to hit goal")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(purple.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(purple.opacity(0.18), lineWidth: 1))
     }
 }
 

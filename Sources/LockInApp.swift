@@ -112,6 +112,7 @@ struct FocusApp: App {
                     dashboardController.open(
                         sessionStore: sessionStore,
                         problemStore: problemStore,
+                        homeworkStore: homeworkStore,
                         settings: settings,
                         dayStore: dayStore,
                         timerManager: timerManager

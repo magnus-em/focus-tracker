@@ -58,6 +58,9 @@ class AppSettings: ObservableObject {
     @Published var sweWeeklyGoal: Int {
         didSet { sd.set(sweWeeklyGoal, forKey: "sweWeeklyGoal") }
     }
+    @Published var homeworkDailyGoal: Int {
+        didSet { sd.set(homeworkDailyGoal, forKey: "homeworkDailyGoal") }
+    }
     @Published var problemSources: [String] {
         didSet { sd.set(problemSources, forKey: "problemSources") }
     }
@@ -124,6 +127,7 @@ class AppSettings: ObservableObject {
             "quantWeeklyGoal": 0,
             "sweGoal": 0,
             "sweWeeklyGoal": 0,
+            "homeworkDailyGoal": 10,
             "problemSources": ["QuantGuide", "LeetCode"],
         ])
         workMinutes = d.double(forKey: "workMinutes")
@@ -147,6 +151,7 @@ class AppSettings: ObservableObject {
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")
         sweWeeklyGoal = d.integer(forKey: "sweWeeklyGoal")
+        homeworkDailyGoal = d.integer(forKey: "homeworkDailyGoal")
         problemSources = d.stringArray(forKey: "problemSources") ?? ["QuantGuide", "LeetCode"]
         let epoch = d.double(forKey: "interviewDate")
         interviewDate = epoch > 0 ? Date(timeIntervalSince1970: epoch) : nil
@@ -186,6 +191,7 @@ class AppSettings: ObservableObject {
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")
         sweWeeklyGoal = d.integer(forKey: "sweWeeklyGoal")
+        homeworkDailyGoal = d.integer(forKey: "homeworkDailyGoal")
         problemSources = d.stringArray(forKey: "problemSources") ?? problemSources
         let epoch = d.double(forKey: "interviewDate")
         interviewDate = epoch > 0 ? Date(timeIntervalSince1970: epoch) : nil

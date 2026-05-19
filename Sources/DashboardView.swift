@@ -7,13 +7,13 @@ import SwiftUI
 class DashboardWindowController: ObservableObject {
     private var window: NSWindow?
 
-    func open(sessionStore: SessionStore, problemStore: ProblemStore, settings: AppSettings, dayStore: DayStore, timerManager: TimerManager) {
+    func open(sessionStore: SessionStore, problemStore: ProblemStore, homeworkStore: HomeworkStore, settings: AppSettings, dayStore: DayStore, timerManager: TimerManager) {
         if let w = window {
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let view = DashboardView(sessionStore: sessionStore, problemStore: problemStore, settings: settings, dayStore: dayStore, timerManager: timerManager)
+        let view = DashboardView(sessionStore: sessionStore, problemStore: problemStore, homeworkStore: homeworkStore, settings: settings, dayStore: dayStore, timerManager: timerManager)
         let vc = NSHostingController(rootView: view)
         let w = NSWindow(contentViewController: vc)
         w.title = "Focus"
@@ -59,6 +59,7 @@ private func fmtHours(_ h: Double) -> String {
 struct DashboardView: View {
     @ObservedObject var sessionStore: SessionStore
     @ObservedObject var problemStore: ProblemStore
+    @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var dayStore: DayStore
     @ObservedObject var timerManager: TimerManager
@@ -288,6 +289,7 @@ struct DashboardView: View {
                 weeklySection
                 focusSplitSection
                 heatmapSection
+                homeworkHeatmapSection
                 narrativeInsightsSection
                 awardsSection
                 HStack(alignment: .top, spacing: 10) {
@@ -369,6 +371,76 @@ struct DashboardView: View {
         case ..<180:  return red.opacity(0.60)
         case ..<300:  return red.opacity(0.80)
         default:      return red
+        }
+    }
+
+    // MARK: - Homework heatmap (18 weeks)
+
+    private var homeworkHeatmapSection: some View {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let earliest = cal.date(byAdding: .day, value: -(18 * 7 - 1), to: today)!
+        let recent = homeworkStore.items.filter { $0.date >= earliest }
+        var countByDay: [Date: Int] = [:]
+        for h in recent {
+            let d = cal.startOfDay(for: h.date)
+            countByDay[d, default: 0] += 1
+        }
+        let weekday = cal.component(.weekday, from: today)
+        let mondayOffset = ((weekday + 5) % 7)
+        let thisWeekMonday = cal.date(byAdding: .day, value: -mondayOffset, to: today)!
+        let startDay = cal.date(byAdding: .weekOfYear, value: -17, to: thisWeekMonday)!
+        let total = countByDay.values.reduce(0, +)
+        let goal = max(1, settings.homeworkDailyGoal)
+        let purple = Color(red: 0.62, green: 0.45, blue: 0.92)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                sectionLabel("HOMEWORK · 18 WEEKS")
+                Spacer()
+                Text("\(total) problems")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 2) {
+                    ForEach(0..<18, id: \.self) { w in
+                        VStack(spacing: 2) {
+                            ForEach(0..<7, id: \.self) { d in
+                                let day = cal.date(byAdding: .day, value: w * 7 + d, to: startDay)!
+                                let n = countByDay[cal.startOfDay(for: day)] ?? 0
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(day > Date() ? Color.gray.opacity(0.05)
+                                          : homeworkCellColor(count: n, goal: goal, base: purple))
+                                    .frame(width: 11, height: 11)
+                            }
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 4) {
+                Text("0").font(.system(size: 9)).foregroundStyle(.tertiary)
+                ForEach([0, max(1, goal/4), max(2, goal/2), goal, goal * 2], id: \.self) { n in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(homeworkCellColor(count: n, goal: goal, base: purple))
+                        .frame(width: 9, height: 9)
+                }
+                Text("goal+").font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(12)
+        .glassCard(cornerRadius: 10)
+    }
+
+    private func homeworkCellColor(count: Int, goal: Int, base: Color) -> Color {
+        if count <= 0 { return Color.gray.opacity(0.18) }
+        let ratio = Double(count) / Double(goal)
+        switch ratio {
+        case ..<0.25: return base.opacity(0.22)
+        case ..<0.5:  return base.opacity(0.40)
+        case ..<1.0:  return base.opacity(0.65)
+        case ..<1.5:  return base.opacity(0.85)
+        default:      return base
         }
     }
 
@@ -691,7 +763,13 @@ struct DashboardView: View {
     // MARK: - Problem progress
 
     private var problemProgressSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let cal = Calendar.current
+        let hwTodayCount = homeworkStore.items.filter { cal.isDateInToday($0.date) }.count
+        let hwGoal = settings.homeworkDailyGoal
+        let hwPct: Double = hwGoal > 0 ? min(1, Double(hwTodayCount) / Double(hwGoal)) : 0
+        let purple = Color(red: 0.62, green: 0.45, blue: 0.92)
+
+        return VStack(alignment: .leading, spacing: 8) {
             sectionLabel("PROBLEM PROGRESS")
 
             ForEach(ProblemDomain.allCases, id: \.self) { domain in
@@ -704,7 +782,7 @@ struct DashboardView: View {
                     Text(domain.rawValue)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(col)
-                        .frame(width: 34, alignment: .leading)
+                        .frame(width: 64, alignment: .leading)
                     GeometryReader { g in
                         ZStack(alignment: .leading) {
                             Capsule().fill(col.opacity(0.1))
@@ -721,6 +799,28 @@ struct DashboardView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 56, alignment: .trailing)
                 }
+            }
+
+            HStack(spacing: 8) {
+                Text("Homework")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(purple)
+                    .frame(width: 64, alignment: .leading)
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(purple.opacity(0.1))
+                        if hwGoal > 0 {
+                            Capsule().fill(purple.opacity(0.85))
+                                .frame(width: g.size.width * CGFloat(hwPct))
+                                .animation(.spring(response: 0.5), value: hwPct)
+                        }
+                    }
+                }
+                .frame(height: 6)
+                Text(hwGoal > 0 ? "\(hwTodayCount)/\(hwGoal)" : "\(hwTodayCount)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 56, alignment: .trailing)
             }
 
             HStack(spacing: 0) {
