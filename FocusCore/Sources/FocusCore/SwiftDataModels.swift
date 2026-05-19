@@ -222,6 +222,11 @@ public final class StoredTimerState {
     public var updatedAt: Date = Date()
     /// Which device authored the most recent update — used to avoid feedback loops.
     public var deviceID: String = ""
+    /// Monotonic Lamport-style counter. Each push does `version = max(local, remote) + 1`.
+    /// Receivers ignore states with `version <= lastSeenVersion`, giving us a clear
+    /// causal "this is newer" signal that doesn't depend on device clocks agreeing.
+    /// Tiebreak on equal versions: larger deviceID wins (string comparison).
+    public var version: Int = 0
 
     public init() {}
 

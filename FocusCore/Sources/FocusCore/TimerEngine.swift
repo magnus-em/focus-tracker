@@ -100,8 +100,10 @@ public final class FocusTimerEngine: ObservableObject {
             self?.applyRemoteMessage(msg)
         }
         // On launch, if a remote timer is already running, adopt it.
+        // version > 0 guards against adopting a default-initialised record.
         if let s = stateSync.currentState(),
            s.deviceID != stateSync.deviceID,
+           s.version > 0,
            s.phase != StoredTimerState.Phase.idle {
             applyRemoteState(s)
         }
@@ -194,10 +196,13 @@ public final class FocusTimerEngine: ObservableObject {
 
     // MARK: - Cross-device state sync
 
-    private var ignoreRemoteUntil: Date = .distantPast
+    /// We no longer use a time-based "ignore round-trip" gate — the version
+    /// counter in StoredTimerState + the deviceID stamp give us a definitive
+    /// answer for "is this our own echo" or "is this newer than what we have".
+    /// The old 3s gate was actively harmful: if a peer pushed a newer state
+    /// within 3s of our push, we'd drop it.
 
     private func pushSharedState() {
-        ignoreRemoteUntil = Date().addingTimeInterval(3.0)  // ignore round-trip for 3s
         let sharedPhase: StoredTimerState.Phase
         switch phase {
         case .work:       sharedPhase = isActive ? .work : .idle
@@ -240,7 +245,6 @@ public final class FocusTimerEngine: ObservableObject {
     }
 
     private func pushIdleEverywhere() {
-        ignoreRemoteUntil = Date().addingTimeInterval(3.0)
         let msg = LocalTimerBroadcast.Message(
             deviceID: stateSync.deviceID,
             phase: "idle",
@@ -258,8 +262,10 @@ public final class FocusTimerEngine: ObservableObject {
     }
 
     /// Apply a state message received via the instant local broadcast.
+    /// (Multipeer messages are self-filtered against `deviceID == self`, so we
+    /// don't need the version gate here — only TimerStateSync's CloudKit path
+    /// needs it.)
     private func applyRemoteMessage(_ msg: LocalTimerBroadcast.Message) {
-        guard Date() > ignoreRemoteUntil else { return }
         guard let phaseEnum = StoredTimerState.Phase(rawValue: msg.phase) else { return }
         if phaseEnum == .idle {
             ticker?.cancel(); ticker = nil
@@ -281,7 +287,10 @@ public final class FocusTimerEngine: ObservableObject {
         currentLabel = msg.label
         currentBreakKinds = msg.breakKindsRaw.compactMap { BreakKind(rawValue: $0) }
         sessionStartTime = msg.startTime
-        if msg.isRunning, let end = msg.endTime {
+        if msg.isRunning, let end = msg.endTime, end.timeIntervalSinceNow > -5 {
+            // "Running" with end far in the past = stale snapshot from a peer
+            // we hadn't synced with in a while. Don't start a ticker that will
+            // immediately auto-complete and possibly insert a phantom session.
             let remaining = max(0, end.timeIntervalSinceNow)
             timeRemaining = remaining
             elapsedBeforePause = totalTime - remaining
@@ -303,9 +312,6 @@ public final class FocusTimerEngine: ObservableObject {
     }
 
     private func applyRemoteState(_ state: StoredTimerState) {
-        // Avoid bouncing our own update back to us.
-        guard Date() > ignoreRemoteUntil else { return }
-
         let remotePhase = state.phase
         if remotePhase == .idle {
             // Remote stopped — stop locally without saving (we trust remote to have saved).
@@ -331,7 +337,10 @@ public final class FocusTimerEngine: ObservableObject {
         currentBreakKinds = state.breakKinds
         sessionStartTime = state.startTime
 
-        if state.isRunning, let end = state.endTime {
+        if state.isRunning, let end = state.endTime, end.timeIntervalSinceNow > -5 {
+            // See note in applyRemoteMessage: stale running-snapshots with
+            // endTime far in the past would otherwise auto-complete and
+            // possibly insert a phantom session. Treat those as paused/idle.
             let remaining = max(0, end.timeIntervalSinceNow)
             timeRemaining = remaining
             elapsedBeforePause = totalTime - remaining
@@ -343,7 +352,8 @@ public final class FocusTimerEngine: ObservableObject {
                 .sink { [weak self] _ in self?.tick() }
             scheduleCompletionNotification()
         } else {
-            // Paused remotely
+            // Paused remotely (or stale "running" with past endTime — same
+            // outcome: don't tick, just show frozen.)
             timeRemaining = state.remainingSeconds
             elapsedBeforePause = totalTime - state.remainingSeconds
             lastResumeTime = nil
@@ -620,12 +630,17 @@ public final class FocusTimerEngine: ObservableObject {
 
     private func didBecomeActive() {
         // 1) Reconcile with shared state — another device may have paused
-        //    or stopped while we were backgrounded. This must happen FIRST
-        //    so we cancel any stale notifications + sync UI before drift fix.
-        ignoreRemoteUntil = .distantPast
+        //    or stopped while we were backgrounded. Read what's already in the
+        //    local CloudKit mirror, AND re-check after a short delay because
+        //    silent-push driven CloudKit imports can land moments after
+        //    `didBecomeActive` fires.
         if let shared = stateSync.currentState(),
-           shared.deviceID != stateSync.deviceID {
+           shared.deviceID != stateSync.deviceID,
+           shared.version > 0 {
             applyRemoteState(shared)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.stateSync.pokeForRemote()
         }
 
         // 2) If the timer is no longer running for any reason (just got

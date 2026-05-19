@@ -43,9 +43,11 @@ class TimerManager: ObservableObject {
             stateSync?.onRemoteChange = { [weak self] state in
                 self?.applyRemoteState(state)
             }
-            // On launch, adopt any remote running timer.
+            // On launch, adopt any remote running timer (only if it has a
+            // meaningful version — version 0 means default/uninitialised).
             if let s = stateSync?.currentState(),
                s.deviceID != stateSync?.deviceID,
+               s.version > 0,
                s.phase != StoredTimerState.Phase.idle {
                 applyRemoteState(s)
             }
@@ -58,7 +60,10 @@ class TimerManager: ObservableObject {
             }
         }
     }
-    private var ignoreRemoteUntil: Date = .distantPast
+    /// No time-based echo gate anymore — TimerStateSync's version field +
+    /// deviceID stamp give us a definitive "is this our echo / is this newer"
+    /// answer. The old 3s window would suppress legitimate newer peer pushes
+    /// that arrived while CloudKit was still processing our own.
 
     private var workDuration: TimeInterval { (settings?.workMinutes ?? 25) * 60 }
     private var breakDuration: TimeInterval { (settings?.shortBreakMinutes ?? 10) * 60 }
@@ -155,7 +160,6 @@ class TimerManager: ObservableObject {
 
     private func pushSharedState() {
         guard let stateSync else { return }
-        ignoreRemoteUntil = Date().addingTimeInterval(3.0)
         let sharedPhase: StoredTimerState.Phase
         switch currentPhase {
         case .work:       sharedPhase = isActive ? .work : .idle
@@ -202,7 +206,6 @@ class TimerManager: ObservableObject {
 
     private func pushIdleEverywhere() {
         guard let stateSync else { return }
-        ignoreRemoteUntil = Date().addingTimeInterval(3.0)
         if let lb = localBroadcast {
             let msg = LocalTimerBroadcast.Message(
                 deviceID: stateSync.deviceID,
@@ -222,7 +225,6 @@ class TimerManager: ObservableObject {
     }
 
     private func applyRemoteMessage(_ msg: LocalTimerBroadcast.Message) {
-        guard Date() > ignoreRemoteUntil else { return }
         guard let phaseEnum = StoredTimerState.Phase(rawValue: msg.phase) else { return }
         if phaseEnum == .idle {
             timer?.cancel(); timer = nil
@@ -242,7 +244,9 @@ class TimerManager: ObservableObject {
         currentLabel = msg.label
         currentBreakKinds = msg.breakKindsRaw.compactMap { BreakKind(rawValue: $0) }
         sessionStartTime = msg.startTime
-        if msg.isRunning, let end = msg.endTime {
+        if msg.isRunning, let end = msg.endTime, end.timeIntervalSinceNow > -5 {
+            // Stale "running" snapshot (endTime in the past): don't auto-
+            // complete and save a phantom session — show frozen instead.
             let remaining = max(0, end.timeIntervalSinceNow)
             timeRemaining = remaining
             elapsedBeforePause = totalTime - remaining
@@ -264,7 +268,6 @@ class TimerManager: ObservableObject {
     }
 
     private func applyRemoteState(_ state: StoredTimerState) {
-        guard Date() > ignoreRemoteUntil else { return }
         let remotePhase = state.phase
         if remotePhase == .idle {
             timer?.cancel(); timer = nil
@@ -284,7 +287,8 @@ class TimerManager: ObservableObject {
         currentLabel = state.label
         currentBreakKinds = state.breakKinds
         sessionStartTime = state.startTime
-        if state.isRunning, let end = state.endTime {
+        if state.isRunning, let end = state.endTime, end.timeIntervalSinceNow > -5 {
+            // Stale "running" snapshot (endTime in the past): treat as paused.
             let remaining = max(0, end.timeIntervalSinceNow)
             timeRemaining = remaining
             elapsedBeforePause = totalTime - remaining
