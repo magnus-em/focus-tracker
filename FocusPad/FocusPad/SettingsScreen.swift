@@ -19,6 +19,7 @@ struct SettingsScreen: View {
     @State private var manualDate: Date = Date()
     @State private var manualLabel: String = ""
     @State private var manualLogged = false
+    @State private var dedupResult: String = ""
 
     var body: some View {
         Form {
@@ -229,29 +230,8 @@ struct SettingsScreen: View {
                 }
             }
 
-            Section("Data") {
-                Button {
-                    do {
-                        let url = try DataExport.makeSnapshotURL(context: context)
-                        exportURL = url
-                        showExportShare = true
-                        Haptics.success()
-                    } catch {
-                        Haptics.warning()
-                    }
-                } label: {
-                    Label("Export Snapshot (JSON)", systemImage: "square.and.arrow.up")
-                }
-            }
-
-            Section("Danger Zone") {
-                Button(role: .destructive) { clearAllData() } label: {
-                    Label("Clear All Local Data", systemImage: "trash")
-                }
-            }
-            .sheet(isPresented: $showExportShare) {
-                if let url = exportURL { ShareSheet(items: [url]) }
-            }
+            dataSection
+            dangerZoneSection
 
             Section {
                 HStack {
@@ -336,6 +316,60 @@ struct SettingsScreen: View {
             }
         }
         db.add(op)
+    }
+
+    private var dataSection: some View {
+        Section {
+            Button {
+                do {
+                    let url = try DataExport.makeSnapshotURL(context: context)
+                    exportURL = url
+                    showExportShare = true
+                    Haptics.success()
+                } catch {
+                    Haptics.warning()
+                }
+            } label: {
+                Label("Export Snapshot (JSON)", systemImage: "square.and.arrow.up")
+            }
+            cleanDuplicatesButton
+        } header: {
+            Text("Data")
+        } footer: {
+            Text("Only deletes rows matching another on time-to-the-second, type, label, AND duration. Use if a session shows doubled.")
+        }
+    }
+
+    private var dangerZoneSection: some View {
+        Section("Danger Zone") {
+            Button(role: .destructive) { clearAllData() } label: {
+                Label("Clear All Local Data", systemImage: "trash")
+            }
+        }
+        .sheet(isPresented: $showExportShare) {
+            if let url = exportURL { ShareSheet(items: [url]) }
+        }
+    }
+
+    @ViewBuilder
+    private var cleanDuplicatesButton: some View {
+        Button {
+            let n = FocusMigration.dedupeWorkSessions(container: context.container)
+            dedupResult = n == 0
+                ? "No exact duplicates found."
+                : "Removed \(n) duplicate session\(n == 1 ? "" : "s")."
+            Haptics.tap()
+        } label: {
+            HStack {
+                Label("Clean Exact Duplicates", systemImage: "wand.and.sparkles")
+                Spacer()
+                if !dedupResult.isEmpty {
+                    Text(dedupResult)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 
     private func clearAllData() {

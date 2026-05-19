@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State private var manualDate: Date = Date()
     @State private var manualLabel: String = ""
     @State private var manualLogged = false
+    @State private var dedupResult: String = ""
 
     var body: some View {
         ScrollView {
@@ -352,6 +353,35 @@ struct SettingsView: View {
                     .cornerRadius(7)
                 }
                 .buttonStyle(.plain)
+
+                Button {
+                    let n = FocusMigration.dedupeWorkSessions(container: modelContext.container)
+                    dedupResult = n == 0
+                        ? "No exact duplicates found."
+                        : "Removed \(n) duplicate session\(n == 1 ? "" : "s")."
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Clean Exact Duplicates").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        if !dedupResult.isEmpty {
+                            Text(dedupResult)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.secondary.opacity(0.06))
+                    .cornerRadius(7)
+                }
+                .buttonStyle(.plain)
+                Text("Removes only rows matching another row on time-to-the-second, type, label, AND duration. Use if Mac/iPad show a doubled session.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
 
                 Divider()
 

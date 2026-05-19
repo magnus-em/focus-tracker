@@ -14,51 +14,38 @@ public enum FocusMigration {
         UserDefaults.standard.bool(forKey: markerKey)
     }
 
-    /// Cleans duplicate `StoredWorkSession` rows. Two rows are considered
-    /// duplicates if they share (type, label, minute-rounded duration)
-    /// AND start within ±3 seconds of each other. Keeps the row with the
-    /// smallest UUID so both Mac and iPad converge on the same survivor.
+    /// Cleans duplicate `StoredWorkSession` rows. **Strict match**: same
+    /// whole-second `startTime`, same `type`, same `label`, AND same
+    /// duration to 0.01 minutes (~0.6 sec of work-time). Keeps the row
+    /// with the smallest UUID so Mac and iPad converge on the same row.
     ///
-    /// More lenient than the prior "round to whole seconds" approach,
-    /// which missed pairs whose timestamps straddled a second boundary
-    /// (e.g. Mac at 15:42:35.998, iPad at 15:42:36.001).
-    ///
-    /// Cheap to run; safe to call on every launch.
+    /// History note: I tried loosening this to a fuzzy ±3s + minute-rounded
+    /// duration match and it deleted a legitimate session whose duration
+    /// happened to round into a neighbour's bucket within a 3-second
+    /// window. Kept this version strict so it only fires on actual
+    /// byte-identical duplicates — the case it was originally designed
+    /// for (Mac and iPad both inserting the same broadcast-driven event).
     @discardableResult
     public static func dedupeWorkSessions(container: ModelContainer) -> Int {
         let ctx = ModelContext(container)
         let all = (try? ctx.fetch(FetchDescriptor<StoredWorkSession>())) ?? []
-        let sorted = all.sorted { $0.startTime < $1.startTime }
-        var toDelete: Set<UUID> = []
-        var i = 0
-        while i < sorted.count {
-            if toDelete.contains(sorted[i].id) { i += 1; continue }
-            let anchor = sorted[i]
-            var cluster: [StoredWorkSession] = [anchor]
-            var j = i + 1
-            while j < sorted.count {
-                let cand = sorted[j]
-                if cand.startTime.timeIntervalSince(anchor.startTime) > 3 { break }
-                let sameType  = cand.typeRaw == anchor.typeRaw
-                let sameLabel = (cand.label ?? "") == (anchor.label ?? "")
-                let sameDur   = Int(cand.durationMinutes.rounded()) == Int(anchor.durationMinutes.rounded())
-                if sameType && sameLabel && sameDur && !toDelete.contains(cand.id) {
-                    cluster.append(cand)
-                }
-                j += 1
-            }
-            if cluster.count > 1 {
-                let survivor = cluster.min(by: { $0.id.uuidString < $1.id.uuidString })!
-                for r in cluster where r.id != survivor.id {
-                    toDelete.insert(r.id)
-                }
-            }
-            i += 1
-        }
+        var seen: [String: StoredWorkSession] = [:]
         var removed = 0
-        for row in all where toDelete.contains(row.id) {
-            ctx.delete(row)
-            removed += 1
+        for row in all {
+            let secKey = Int(row.startTime.timeIntervalSince1970)
+            let durKey = Int((row.durationMinutes * 100).rounded())
+            let key = "\(secKey)|\(row.typeRaw)|\(row.label ?? "")|\(durKey)"
+            if let kept = seen[key] {
+                if row.id.uuidString < kept.id.uuidString {
+                    ctx.delete(kept)
+                    seen[key] = row
+                } else {
+                    ctx.delete(row)
+                }
+                removed += 1
+            } else {
+                seen[key] = row
+            }
         }
         if removed > 0 { try? ctx.save() }
         return removed

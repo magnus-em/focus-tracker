@@ -21,10 +21,9 @@ struct FocusPadApp: App {
         }
         self.container = c
 
-        // Idempotent dedup — clears any historical Mac+iPad double-saves
-        // that were committed before the insert-time guard landed.
-        let removed = FocusMigration.dedupeWorkSessions(container: c)
-        if removed > 0 { print("[FocusDedup] removed \(removed) duplicate session(s)") }
+        // Dedup runs on user request (Settings → Clean Duplicate Sessions),
+        // not automatically. Auto-fire can wrongly delete legitimately
+        // identical back-to-back sessions.
 
         let s = PadSettings()
         _settings = StateObject(wrappedValue: s)

@@ -27,10 +27,9 @@ private func runOneShotMigration() {
     if !result.alreadyMigrated {
         print("[FocusMigration] sessions=\(result.sessions) problems=\(result.problems) homework=\(result.homework) days=\(result.dayRecords) scratch=\(result.scratch)")
     }
-    // Idempotent — guards against any historical Mac+iPad double-saves that
-    // were committed before the insert-time dedup landed.
-    let removed = FocusMigration.dedupeWorkSessions(container: focusContainer)
-    if removed > 0 { print("[FocusDedup] removed \(removed) duplicate session(s)") }
+    // Dedup is NOT auto-run anymore — even a strict match can be wrong if
+    // the data isn't actually duplicated (e.g. two legitimate identical
+    // 60-min Quant sessions back-to-back). Trigger manually via Settings.
 }
 
 @main
