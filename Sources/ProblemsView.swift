@@ -57,6 +57,10 @@ struct ProblemsView: View {
                     isShowing: $showHomeworkLog,
                     prefill: homeworkPrefill
                 )
+                // Forcing a unique identity per-prefill guarantees SwiftUI
+                // rebuilds the @State (and therefore re-runs `init`) instead
+                // of recycling the previous view with empty fields.
+                .id(homeworkPrefill?.catalogID ?? "manual")
                 .transition(.opacity.animation(.easeInOut(duration: 0.15)))
                 .zIndex(3)
             }
@@ -1079,6 +1083,19 @@ private struct HomeworkRow: View {
                             }
                             .foregroundStyle(.orange)
                         }
+                        if item.isDueForReview {
+                            Text("·").font(.system(size: 9)).foregroundStyle(.quaternary)
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8))
+                                Text("Review").font(.system(size: 9))
+                            }
+                            .foregroundStyle(Color(red: 0.62, green: 0.45, blue: 0.92))
+                        } else if item.needsReview, let due = item.reviewDueDate {
+                            Text("·").font(.system(size: 9)).foregroundStyle(.quaternary)
+                            Text("review \(shortDateStr(due))")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Color(red: 0.62, green: 0.45, blue: 0.92).opacity(0.7))
+                        }
                     }
                 }
                 Spacer()
@@ -1112,6 +1129,7 @@ private struct HomeworkFields: View {
     @Binding var confidence: Confidence
     @Binding var usedAI: Bool
     @Binding var notes: String
+    @Binding var needsReview: Bool
     @ObservedObject var settings: AppSettings
 
     var body: some View {
@@ -1176,7 +1194,7 @@ private struct HomeworkFields: View {
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 16) {
                 Toggle(isOn: $usedAI) {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles").font(.system(size: 10))
@@ -1185,6 +1203,16 @@ private struct HomeworkFields: View {
                     .foregroundStyle(usedAI ? .orange : .secondary)
                 }
                 .toggleStyle(.checkbox)
+
+                Toggle(isOn: $needsReview) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 10))
+                        Text("Mark for review").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(needsReview ? Color(red: 0.62, green: 0.45, blue: 0.92) : .secondary)
+                }
+                .toggleStyle(.checkbox)
+                .help("Adds this to the homework review queue (1 day out)")
             }
 
             VStack(alignment: .leading, spacing: 5) {
@@ -1215,15 +1243,32 @@ struct HomeworkLogOverlay: View {
     @ObservedObject var store: HomeworkStore
     @ObservedObject var settings: AppSettings
     @Binding var isShowing: Bool
-    var prefill: Stat110PickerPrefill? = nil
+    let prefill: Stat110PickerPrefill?
 
-    @State private var title = ""
-    @State private var source = "Homework"
-    @State private var url = ""
+    @State private var title: String
+    @State private var source: String
+    @State private var url: String = ""
     @State private var difficulty: ProblemDifficulty = .medium
     @State private var confidence: Confidence = .solid
-    @State private var usedAI = false
-    @State private var notes = ""
+    @State private var usedAI: Bool = false
+    @State private var needsReview: Bool = false
+    @State private var notes: String = ""
+
+    /// Custom init so the picker's prefill actually lands on the `@State`
+    /// fields. SwiftUI only honors @State default values OR an
+    /// `_property = State(initialValue:)` assignment inside init; relying
+    /// on `.onAppear` to copy in the prefill is racey on macOS — the body
+    /// runs (with empty fields) before onAppear fires, and any keystroke
+    /// the user makes in between gets clobbered.
+    init(store: HomeworkStore, settings: AppSettings,
+         isShowing: Binding<Bool>, prefill: Stat110PickerPrefill? = nil) {
+        self.store = store
+        self.settings = settings
+        self._isShowing = isShowing
+        self.prefill = prefill
+        _title  = State(initialValue: prefill?.title  ?? "")
+        _source = State(initialValue: prefill?.source ?? "Homework")
+    }
 
     var body: some View {
         ZStack {
@@ -1245,7 +1290,8 @@ struct HomeworkLogOverlay: View {
                     HomeworkFields(
                         title: $title, source: $source, url: $url,
                         difficulty: $difficulty, confidence: $confidence,
-                        usedAI: $usedAI, notes: $notes, settings: settings
+                        usedAI: $usedAI, notes: $notes,
+                        needsReview: $needsReview, settings: settings
                     )
                     .padding(20)
                 }
@@ -1259,7 +1305,8 @@ struct HomeworkLogOverlay: View {
                         usedAI: usedAI,
                         notes: notes.trimmingCharacters(in: .whitespaces),
                         url: url.trimmingCharacters(in: .whitespaces),
-                        catalogID: prefill?.catalogID
+                        catalogID: prefill?.catalogID,
+                        needsReview: needsReview
                     ))
                     isShowing = false
                 } label: {
@@ -1277,12 +1324,6 @@ struct HomeworkLogOverlay: View {
                 .padding(16)
             }
         }
-        .onAppear {
-            if let p = prefill {
-                title = p.title
-                source = p.source
-            }
-        }
     }
 }
 
@@ -1298,6 +1339,7 @@ struct HomeworkEditOverlay: View {
     @State private var difficulty: ProblemDifficulty = .medium
     @State private var confidence: Confidence = .solid
     @State private var usedAI = false
+    @State private var needsReview = false
     @State private var notes = ""
 
     var body: some View {
@@ -1320,7 +1362,8 @@ struct HomeworkEditOverlay: View {
                     HomeworkFields(
                         title: $title, source: $source, url: $url,
                         difficulty: $difficulty, confidence: $confidence,
-                        usedAI: $usedAI, notes: $notes, settings: settings
+                        usedAI: $usedAI, notes: $notes,
+                        needsReview: $needsReview, settings: settings
                     )
                     .padding(20)
                 }
@@ -1347,6 +1390,7 @@ struct HomeworkEditOverlay: View {
                         updated.confidence = confidence
                         updated.usedAI = usedAI
                         updated.notes = notes.trimmingCharacters(in: .whitespaces)
+                        updated.needsReview = needsReview
                         store.update(updated)
                         isShowing = false
                     } label: {
@@ -1369,6 +1413,7 @@ struct HomeworkEditOverlay: View {
             confidence = item.confidence
             usedAI = item.usedAI
             notes = item.notes
+            needsReview = item.needsReview
         }
     }
 }

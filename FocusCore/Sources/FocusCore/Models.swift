@@ -175,10 +175,22 @@ public struct HomeworkProblem: Codable, Identifiable, Sendable {
     /// Nil for manually-typed entries; non-nil when the user picked from
     /// a course catalog — we use it to mark catalog items as "done."
     public var catalogID: String?
+    /// Mark for review (mirrors ProblemEntry). Drives the review-due
+    /// schedule along with `confidence`.
+    public var needsReview: Bool
+    /// User-overridable review date. If nil, falls back to the schedule
+    /// computed from `confidence` + `needsReview`.
+    public var reviewOverrideDate: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, date, title, source, difficulty, confidence, usedAI, notes, url
+        case catalogID, needsReview, reviewOverrideDate
+    }
 
     public init(title: String, source: String = "", difficulty: ProblemDifficulty = .medium,
                 confidence: Confidence = .solid, usedAI: Bool = false,
-                notes: String = "", url: String = "", catalogID: String? = nil) {
+                notes: String = "", url: String = "", catalogID: String? = nil,
+                needsReview: Bool = false, reviewOverrideDate: Date? = nil) {
         self.id = UUID()
         self.date = Date()
         self.title = title
@@ -189,12 +201,15 @@ public struct HomeworkProblem: Codable, Identifiable, Sendable {
         self.notes = notes
         self.url = url
         self.catalogID = catalogID
+        self.needsReview = needsReview
+        self.reviewOverrideDate = reviewOverrideDate
     }
 
     public init(id: UUID, date: Date, title: String, source: String = "",
                 difficulty: ProblemDifficulty = .medium, confidence: Confidence = .solid,
                 usedAI: Bool = false, notes: String = "", url: String = "",
-                catalogID: String? = nil) {
+                catalogID: String? = nil, needsReview: Bool = false,
+                reviewOverrideDate: Date? = nil) {
         self.id = id
         self.date = date
         self.title = title
@@ -205,6 +220,45 @@ public struct HomeworkProblem: Codable, Identifiable, Sendable {
         self.notes = notes
         self.url = url
         self.catalogID = catalogID
+        self.needsReview = needsReview
+        self.reviewOverrideDate = reviewOverrideDate
+    }
+
+    /// Decode tolerant of older JSON that doesn't have the new fields.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id           = try c.decode(UUID.self,             forKey: .id)
+        date         = try c.decode(Date.self,             forKey: .date)
+        title        = try c.decode(String.self,           forKey: .title)
+        source       = try c.decodeIfPresent(String.self,  forKey: .source)       ?? ""
+        difficulty   = try c.decodeIfPresent(ProblemDifficulty.self, forKey: .difficulty) ?? .medium
+        confidence   = try c.decodeIfPresent(Confidence.self,        forKey: .confidence) ?? .solid
+        usedAI       = try c.decodeIfPresent(Bool.self,    forKey: .usedAI)       ?? false
+        notes        = try c.decodeIfPresent(String.self,  forKey: .notes)        ?? ""
+        url          = try c.decodeIfPresent(String.self,  forKey: .url)          ?? ""
+        catalogID    = try c.decodeIfPresent(String.self,  forKey: .catalogID)
+        needsReview  = try c.decodeIfPresent(Bool.self,    forKey: .needsReview)  ?? false
+        reviewOverrideDate = try c.decodeIfPresent(Date.self, forKey: .reviewOverrideDate)
+    }
+
+    /// Spaced-repetition schedule — same shape as ProblemEntry.
+    /// - Solid confidence + not marked = no review needed.
+    /// - Marked for review or struggled = 1 day out.
+    /// - Mid-confidence (okay / shaky) = 3 days out.
+    /// - User-set override always wins.
+    public var reviewDueDate: Date? {
+        if let override = reviewOverrideDate { return override }
+        guard confidence != .solid || needsReview else { return nil }
+        let interval: TimeInterval
+        if needsReview { interval = 1 * 86400 }
+        else if confidence == .struggled { interval = 1 * 86400 }
+        else { interval = 3 * 86400 }
+        return date.addingTimeInterval(interval)
+    }
+
+    public var isDueForReview: Bool {
+        guard let due = reviewDueDate else { return false }
+        return due <= Date()
     }
 }
 

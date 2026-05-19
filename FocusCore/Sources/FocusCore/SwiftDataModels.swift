@@ -122,6 +122,11 @@ public final class StoredHomework {
     /// Optional link back to a catalog problem (e.g. Stat 110 HW2 #3).
     /// Nil for manually-entered homework. See `Stat110Catalog`.
     public var catalogID: String? = nil
+    /// Mirrors ProblemEntry.needsReview — drives the homework review queue.
+    public var needsReview: Bool = false
+    /// User-set "review again on this date". Overrides the confidence-driven
+    /// schedule (`reviewDueDate`) computed in HomeworkProblem.
+    public var reviewOverrideDate: Date? = nil
 
     public init() {}
 
@@ -137,6 +142,8 @@ public final class StoredHomework {
         self.notes = value.notes
         self.urlString = value.url
         self.catalogID = value.catalogID
+        self.needsReview = value.needsReview
+        self.reviewOverrideDate = value.reviewOverrideDate
     }
 
     public var difficulty: ProblemDifficulty {
@@ -153,7 +160,8 @@ public final class StoredHomework {
         HomeworkProblem(id: id, date: date, title: title, source: source,
                         difficulty: difficulty, confidence: confidence,
                         usedAI: usedAI, notes: notes, url: urlString,
-                        catalogID: catalogID)
+                        catalogID: catalogID, needsReview: needsReview,
+                        reviewOverrideDate: reviewOverrideDate)
     }
 }
 

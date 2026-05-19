@@ -26,6 +26,13 @@ struct HomeworkScreen: View {
         }
     }
 
+    /// Homework items whose review is due (now or earlier). Sorted by
+    /// most-overdue first so the top of the queue is the most stale.
+    private var reviewDueItems: [StoredHomework] {
+        items.filter { $0.asValue.isDueForReview }
+            .sorted { ($0.asValue.reviewDueDate ?? .distantFuture) < ($1.asValue.reviewDueDate ?? .distantFuture) }
+    }
+
     var body: some View {
         Group {
             if items.isEmpty {
@@ -41,6 +48,23 @@ struct HomeworkScreen: View {
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
                             .listRowBackground(Color.clear)
                     }
+                    if !reviewDueItems.isEmpty {
+                        Section {
+                            ForEach(reviewDueItems) { h in
+                                NavigationLink {
+                                    HomeworkDetailScreen(homework: h)
+                                } label: {
+                                    HomeworkRow(item: h, showReviewDue: true)
+                                }
+                            }
+                        } header: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text("REVIEW DUE (\(reviewDueItems.count))")
+                            }
+                            .foregroundStyle(Color(red: 0.62, green: 0.45, blue: 0.92))
+                        }
+                    }
                     Section {
                         ForEach(filteredItems) { h in
                             NavigationLink {
@@ -50,6 +74,8 @@ struct HomeworkScreen: View {
                             }
                         }
                         .onDelete(perform: delete)
+                    } header: {
+                        Text("ALL")
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -167,6 +193,10 @@ private struct HomeworkTodayHeader: View {
 
 private struct HomeworkRow: View {
     let item: StoredHomework
+    var showReviewDue: Bool = false
+
+    private var purple: Color { Color(red: 0.62, green: 0.45, blue: 0.92) }
+
     var body: some View {
         HStack(spacing: 10) {
             Circle().fill(item.confidence.color).frame(width: 8, height: 8)
@@ -179,6 +209,7 @@ private struct HomeworkRow: View {
                     if !item.source.isEmpty {
                         Text("·").font(.caption).foregroundStyle(.tertiary)
                         Text(item.source).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     if item.usedAI {
                         Text("·").font(.caption).foregroundStyle(.tertiary)
@@ -187,11 +218,23 @@ private struct HomeworkRow: View {
                             Text("AI").font(.caption)
                         }.foregroundStyle(.orange)
                     }
+                    if item.needsReview {
+                        Text("·").font(.caption).foregroundStyle(.tertiary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.triangle.2.circlepath").font(.caption2)
+                            Text("Review").font(.caption)
+                        }.foregroundStyle(purple)
+                    }
                 }
             }
             Spacer()
-            Text(item.date, style: .date)
-                .font(.caption2).foregroundStyle(.tertiary)
+            if showReviewDue, let due = item.asValue.reviewDueDate {
+                Text(due, style: .relative)
+                    .font(.caption2).foregroundStyle(purple)
+            } else {
+                Text(item.date, style: .date)
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -209,12 +252,13 @@ struct AddHomeworkSheet: View {
 
     let prefill: Prefill?
 
-    @State private var title = ""
-    @State private var source = ""
+    @State private var title: String
+    @State private var source: String
     @State private var url = ""
     @State private var difficulty: ProblemDifficulty = .medium
     @State private var confidence: Confidence = .solid
     @State private var usedAI = false
+    @State private var needsReview = false
     @State private var notes = ""
 
     init(prefill: Prefill? = nil) {
@@ -238,6 +282,12 @@ struct AddHomeworkSheet: View {
                     }.pickerStyle(.segmented)
                 }
                 Section { Toggle("Used AI help", isOn: $usedAI) }
+                Section {
+                    Toggle("Mark for review", isOn: $needsReview)
+                } footer: {
+                    Text("Adds this to the homework review queue (~1 day out, sooner than the confidence-based default).")
+                        .font(.caption)
+                }
                 Section("Source (optional)") { TextField("e.g. textbook, problem set", text: $source) }
                 Section("URL (optional)") {
                     TextField("https://…", text: $url)
@@ -266,7 +316,8 @@ struct AddHomeworkSheet: View {
             source: source, difficulty: difficulty, confidence: confidence,
             usedAI: usedAI, notes: notes.trimmingCharacters(in: .whitespaces),
             url: url.trimmingCharacters(in: .whitespaces),
-            catalogID: prefill?.catalogID
+            catalogID: prefill?.catalogID,
+            needsReview: needsReview
         )
         context.insert(StoredHomework(value: item))
         try? context.save()
@@ -297,6 +348,15 @@ struct HomeworkDetailScreen: View {
                 }.pickerStyle(.segmented)
             }
             Section { Toggle("Used AI help", isOn: $homework.usedAI) }
+            Section {
+                Toggle("Mark for review", isOn: $homework.needsReview)
+            } footer: {
+                if let due = homework.asValue.reviewDueDate {
+                    Text("Review due: \(due, style: .date)").font(.caption)
+                } else {
+                    Text("No review scheduled. Toggle on or lower confidence to schedule.").font(.caption)
+                }
+            }
             Section("Source") { TextField("Source", text: $homework.source) }
             Section("URL") {
                 TextField("https://…", text: $homework.urlString)
@@ -332,5 +392,6 @@ struct HomeworkDetailScreen: View {
         .onChange(of: homework.difficultyRaw) { _, _ in try? context.save() }
         .onChange(of: homework.confidenceRaw) { _, _ in try? context.save() }
         .onChange(of: homework.usedAI) { _, _ in try? context.save() }
+        .onChange(of: homework.needsReview) { _, _ in try? context.save() }
     }
 }
