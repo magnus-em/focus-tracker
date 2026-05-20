@@ -327,6 +327,13 @@ struct TimerView: View {
         .padding(.horizontal, 4)
     }
 
+    // `.glassEffect(.interactive(), in: Circle())` applied as a modifier on
+    // Button on macOS Tahoe can intermittently swallow clicks because the
+    // glass-overlay hit region overlaps but doesn't equal the Button's. The
+    // fix is to make the Button's hit region explicit with `.contentShape`
+    // and ensure it covers the full 48x48 frame, not just the inscribed
+    // circle. Symptom of the bug: pressing play does *nothing* —
+    // timer.start() never runs, no checkpoint is written, no state pushed.
     @ViewBuilder
     private func controlPrimaryButton(systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
         if #available(macOS 26.0, *) {
@@ -335,6 +342,7 @@ struct TimerView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive().tint(tint), in: Circle())
@@ -346,6 +354,7 @@ struct TimerView: View {
                     .frame(width: 48, height: 48)
                     .background(tint)
                     .clipShape(Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
@@ -358,6 +367,7 @@ struct TimerView: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: Circle())
@@ -369,6 +379,7 @@ struct TimerView: View {
                     .frame(width: 34, height: 34)
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(help)
