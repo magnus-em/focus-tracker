@@ -75,6 +75,20 @@ class TimerManager: ObservableObject {
             localBroadcast?.onMessage = { [weak self] msg in
                 self?.applyRemoteMessage(msg)
             }
+            // When a peer reconnects, rebroadcast our current state so they
+            // see any session that started before the link was up.
+            localBroadcast?.onPeerConnected = { [weak self] in
+                guard let self else { return }
+                guard self.isActive else {
+                    SyncLog.event("mpPeerConnectSkip", ["reason": "localIdle"])
+                    return
+                }
+                SyncLog.event("mpPeerConnectRebroadcast", [
+                    "phase": self.phaseKey(self.currentPhase),
+                    "isRunning": self.isRunning,
+                ])
+                self.pushSharedState()
+            }
         }
     }
     /// No time-based echo gate anymore — TimerStateSync's version field +

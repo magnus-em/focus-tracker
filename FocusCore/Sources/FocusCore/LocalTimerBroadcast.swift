@@ -52,6 +52,18 @@ public final class LocalTimerBroadcast: NSObject, ObservableObject {
     /// Called on the main thread when a peer sends us state.
     public var onMessage: ((Message) -> Void)?
 
+    /// Called on the main thread the moment a new peer transitions to
+    /// `.connected`. The engine should respond by re-broadcasting its
+    /// current state so the new peer learns about an already-running
+    /// session that started BEFORE Multipeer was reachable.
+    ///
+    /// Without this, the canonical bug is: device A starts a timer (no
+    /// peers connected → `mpSendSkipNoPeers`), then device B launches and
+    /// connects to A via Multipeer. B receives no state. CloudKit's silent
+    /// push may or may not arrive on B (often doesn't on macOS), so B
+    /// stays idle while A is running for an unbounded amount of time.
+    public var onPeerConnected: (() -> Void)?
+
     public init(deviceID: String) {
         self.deviceID = deviceID
 
@@ -124,6 +136,12 @@ extension LocalTimerBroadcast: MCSessionDelegate {
             "state": stateName,
             "totalPeers": session.connectedPeers.count,
         ])
+        if state == .connected {
+            // New peer reachable — let the engine push current state so the
+            // peer doesn't miss a session that started before connection.
+            let cb = onPeerConnected
+            DispatchQueue.main.async { cb?() }
+        }
         // NOTE: do NOT stop/restart advertiser+browser on disconnect.
         // MCNearbyServiceBrowser/Advertiser drive an internal NSNetService
         // on its own sync queue; rapid stop+start leaves a stale

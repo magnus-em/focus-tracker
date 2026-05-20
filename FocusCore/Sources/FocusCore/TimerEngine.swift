@@ -99,6 +99,25 @@ public final class FocusTimerEngine: ObservableObject {
         localBroadcast.onMessage = { [weak self] msg in
             self?.applyRemoteMessage(msg)
         }
+        // When a new peer joins Multipeer, immediately rebroadcast our
+        // current state. Without this, a session that started before the
+        // peer was reachable would be invisible to the peer (CloudKit
+        // silent push is unreliable, especially Mac side).
+        localBroadcast.onPeerConnected = { [weak self] in
+            guard let self else { return }
+            // Only re-broadcast if WE have something the peer needs to know
+            // about. If we're idle, broadcasting idle to a peer that's
+            // running would clobber their session.
+            guard self.isActive else {
+                SyncLog.event("mpPeerConnectSkip", ["reason": "localIdle"])
+                return
+            }
+            SyncLog.event("mpPeerConnectRebroadcast", [
+                "phase": self.phase.rawValue,
+                "isRunning": self.isRunning,
+            ])
+            self.pushSharedState()
+        }
         // On launch, adopt the shared state if we're locally idle and
         // the stored state is meaningful (version > 0, non-idle). NO
         // deviceID filter here — at startup our in-memory state is empty,
