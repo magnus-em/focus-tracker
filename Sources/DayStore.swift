@@ -6,10 +6,34 @@ class DayStore: ObservableObject {
     @Published var records: [DayRecord] = []
 
     private let context: ModelContext
+    private var dayChangedObserver: NSObjectProtocol?
 
     init(container: ModelContainer) {
         self.context = ModelContext(container)
         refresh()
+
+        // `todayRecord` filters via `Calendar.isDateInToday(...)`. When the
+        // menu-bar app stays running across midnight, no @Published fires
+        // so SwiftUI doesn't re-render — `isDayStarted` keeps returning
+        // true for yesterday's record. NSCalendarDayChanged forces a
+        // re-render at the boundary.
+        dayChangedObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
+
+    deinit {
+        if let o = dayChangedObserver { NotificationCenter.default.removeObserver(o) }
+    }
+
+    /// Force-refresh path for `.onAppear` of any view that shows
+    /// "today"-scoped UI — covers the case where the day-change
+    /// notification was missed while the system was asleep.
+    func touchForToday() {
+        objectWillChange.send()
     }
 
     private func refresh() {

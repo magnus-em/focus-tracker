@@ -165,6 +165,15 @@ struct PopoverContent: View {
             .frame(width: 300)
             .popoverBackground()
             .onAppear {
+                // Force "today"-scoped views to re-evaluate every time the
+                // popover opens. Without this, a menu-bar app that's been
+                // running since yesterday would still display yesterday's
+                // dayStart, today-focus minutes, etc. — the underlying
+                // computeds are correct, but SwiftUI doesn't know to call
+                // them again until an @Published fires.
+                sessionStore.touchForToday()
+                dayStore.touchForToday()
+
                 let todayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
                 if dayStore.isDayStarted && settings.needsCommitmentToday
                     && lastCommitmentPromptDay < todayStart {

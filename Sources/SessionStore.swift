@@ -7,10 +7,38 @@ class SessionStore: ObservableObject {
     @Published var sessions: [WorkSession] = []
 
     private let context: ModelContext
+    private var dayChangedObserver: NSObjectProtocol?
 
     init(container: ModelContainer) {
         self.context = ModelContext(container)
         refresh()
+
+        // Force SwiftUI views observing "today" computeds (todayWorkMinutes,
+        // todayWorkSessions, todayBreakMinutes, todaySessionCount, etc.) to
+        // re-render when the calendar day rolls over at midnight. The
+        // underlying filter uses `Calendar.isDateInToday(...)` — correct on
+        // every call, but a menu-bar app that stays open across midnight
+        // never gets a publisher event to trigger SwiftUI's body re-eval.
+        // NSCalendarDayChanged is broadcast by the system at midnight and
+        // any time the user changes time/timezone.
+        dayChangedObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
+
+    deinit {
+        if let o = dayChangedObserver { NotificationCenter.default.removeObserver(o) }
+    }
+
+    /// Belt-and-suspenders: invoked from the popover's `.onAppear` so that
+    /// even if the day-change notification was missed (app was asleep at
+    /// midnight, or system never fired it for some reason), the UI
+    /// re-evaluates "today" filters as soon as the user looks at it.
+    func touchForToday() {
+        objectWillChange.send()
     }
 
     private func refresh() {
