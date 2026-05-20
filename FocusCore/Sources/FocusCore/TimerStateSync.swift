@@ -40,12 +40,23 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         self.container = container
         self.deviceID = Self.persistedDeviceID()
         self.lastSeenVersion = UserDefaults.standard.integer(forKey: Self.lastSeenVersionKey)
-        print("[TimerStateSync] init deviceID=\(deviceID.prefix(8)) lastSeenVersion=\(lastSeenVersion)")
+        SyncLog.truncateIfLarge()
+        SyncLog.event("syncInit", [
+            "deviceID": String(deviceID.prefix(8)),
+            "lastSeenVersionFromDefaults": lastSeenVersion,
+        ])
 
         // Initialize lastSeen from whatever's already in the store
         // so we don't fire onRemoteChange for our own prior writes.
         if let existing = currentState() {
             lastSeenVersion = max(lastSeenVersion, existing.version)
+            SyncLog.event("syncInitAdoptExisting", [
+                "existingVersion": existing.version,
+                "existingPhase": existing.phase.rawValue,
+                "existingIsRunning": existing.isRunning,
+                "existingDevice": String(existing.deviceID.prefix(8)),
+                "newLastSeen": lastSeenVersion,
+            ])
         }
 
         // React the *moment* CloudKit's import lands rather than waiting for
@@ -57,6 +68,7 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            SyncLog.event("ckRemoteChangeNotif")
             self?.checkForRemote()
             self?.scheduleDedupAfterImport()
         }
@@ -128,6 +140,18 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         try? ctx.save()
         lastSeenVersion = record.version
         UserDefaults.standard.set(lastSeenVersion, forKey: Self.lastSeenVersionKey)
+        SyncLog.event("ckPush", [
+            "version": record.version,
+            "phase": record.phase.rawValue,
+            "isRunning": record.isRunning,
+            "totalSeconds": record.totalSeconds,
+            "label": record.label,
+            "startTime": SyncLog.opt(record.startTime),
+            "endTime": SyncLog.opt(record.endTime),
+            "remaining": record.remainingSeconds,
+            "deviceID": String(deviceID.prefix(8)),
+            "duplicatesDeleted": rows.count - 1,
+        ])
     }
 
     /// Convenience: clear the state to idle.
@@ -145,7 +169,10 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
     }
 
     private func checkForRemote() {
-        guard let state = currentState() else { return }
+        guard let state = currentState() else {
+            SyncLog.event("ckCheckEmpty")
+            return
+        }
         // Own-writes that come back via CloudKit echo: just update the
         // high-water mark and skip — but DON'T skip on version equality
         // alone, because a peer could have authored a state with the same
@@ -153,13 +180,35 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         if state.deviceID == deviceID && state.version <= lastSeenVersion {
             return
         }
-        guard state.version > lastSeenVersion else { return }
+        guard state.version > lastSeenVersion else {
+            return
+        }
+        let priorLastSeen = lastSeenVersion
         lastSeenVersion = state.version
         UserDefaults.standard.set(lastSeenVersion, forKey: Self.lastSeenVersionKey)
         // Don't fire onRemoteChange for our own state coming back — even if
         // the version bumped (shouldn't, since we already set lastSeenVersion
         // on push). Belt-and-suspenders.
-        guard state.deviceID != deviceID else { return }
+        guard state.deviceID != deviceID else {
+            SyncLog.event("ckCheckOwnEcho", [
+                "version": state.version,
+                "priorLastSeen": priorLastSeen,
+            ])
+            return
+        }
+        SyncLog.event("ckApplyRemote", [
+            "version": state.version,
+            "priorLastSeen": priorLastSeen,
+            "phase": state.phase.rawValue,
+            "isRunning": state.isRunning,
+            "totalSeconds": state.totalSeconds,
+            "label": state.label,
+            "startTime": SyncLog.opt(state.startTime),
+            "endTime": SyncLog.opt(state.endTime),
+            "remaining": state.remainingSeconds,
+            "fromDevice": String(state.deviceID.prefix(8)),
+            "updatedAt": state.updatedAt,
+        ])
         onRemoteChange?(state)
     }
 

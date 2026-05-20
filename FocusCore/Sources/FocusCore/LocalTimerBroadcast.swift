@@ -83,8 +83,24 @@ public final class LocalTimerBroadcast: NSObject, ObservableObject {
     }
 
     public func send(_ message: Message) {
-        guard !session.connectedPeers.isEmpty else { return }
+        guard !session.connectedPeers.isEmpty else {
+            SyncLog.event("mpSendSkipNoPeers", [
+                "phase": message.phase,
+                "isRunning": message.isRunning,
+            ])
+            return
+        }
         guard let data = try? JSONEncoder().encode(message) else { return }
+        SyncLog.event("mpSend", [
+            "phase": message.phase,
+            "isRunning": message.isRunning,
+            "totalSeconds": message.totalSeconds,
+            "label": message.label,
+            "startTime": SyncLog.opt(message.startTime),
+            "endTime": SyncLog.opt(message.endTime),
+            "remaining": message.remainingSeconds,
+            "peers": session.connectedPeers.count,
+        ])
         try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
     }
 
@@ -103,7 +119,11 @@ extension LocalTimerBroadcast: MCSessionDelegate {
         case .connected:    stateName = "connected"
         @unknown default:   stateName = "unknown"
         }
-        print("[LocalTimerBroadcast] peer \(peerID.displayName) is \(stateName) (total: \(session.connectedPeers.count))")
+        SyncLog.event("mpPeerState", [
+            "peer": peerID.displayName,
+            "state": stateName,
+            "totalPeers": session.connectedPeers.count,
+        ])
         // NOTE: do NOT stop/restart advertiser+browser on disconnect.
         // MCNearbyServiceBrowser/Advertiser drive an internal NSNetService
         // on its own sync queue; rapid stop+start leaves a stale
@@ -114,8 +134,23 @@ extension LocalTimerBroadcast: MCSessionDelegate {
     }
 
     public func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        guard let msg = try? JSONDecoder().decode(Message.self, from: data) else { return }
+        guard let msg = try? JSONDecoder().decode(Message.self, from: data) else {
+            SyncLog.event("mpRecvDecodeFail", ["peer": peerID.displayName])
+            return
+        }
         guard msg.deviceID != deviceID else { return }   // ignore self-echo
+        SyncLog.event("mpRecv", [
+            "peer": peerID.displayName,
+            "fromDevice": String(msg.deviceID.prefix(8)),
+            "phase": msg.phase,
+            "isRunning": msg.isRunning,
+            "totalSeconds": msg.totalSeconds,
+            "label": msg.label,
+            "startTime": SyncLog.opt(msg.startTime),
+            "endTime": SyncLog.opt(msg.endTime),
+            "remaining": msg.remainingSeconds,
+            "msgTimestamp": msg.timestamp,
+        ])
         DispatchQueue.main.async { [weak self] in
             self?.onMessage?(msg)
         }

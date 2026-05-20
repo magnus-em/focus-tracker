@@ -145,6 +145,12 @@ class TimerManager: ObservableObject {
     // MARK: - Controls
 
     func start() {
+        SyncLog.event("localStart", [
+            "phase": phaseKey(currentPhase),
+            "totalTime": totalTime,
+            "timeRemaining": timeRemaining,
+            "label": currentLabel,
+        ])
         cancelPauseGrace()
         if sessionStartTime == nil { sessionStartTime = Date() }
         lastResumeTime = Date()
@@ -159,6 +165,10 @@ class TimerManager: ObservableObject {
     }
 
     func pause() {
+        SyncLog.event("localPause", [
+            "phase": phaseKey(currentPhase),
+            "timeRemaining": timeRemaining,
+        ])
         if let resumeTime = lastResumeTime {
             elapsedBeforePause += Date().timeIntervalSince(resumeTime)
         }
@@ -243,7 +253,25 @@ class TimerManager: ObservableObject {
 
     private func applyRemoteMessage(_ msg: LocalTimerBroadcast.Message) {
         guard let phaseEnum = StoredTimerState.Phase(rawValue: msg.phase) else { return }
+        SyncLog.event("applyMp", [
+            "phase": msg.phase,
+            "isRunning": msg.isRunning,
+            "totalSeconds": msg.totalSeconds,
+            "endTime": SyncLog.opt(msg.endTime),
+            "remaining": msg.remainingSeconds,
+            "msgTs": msg.timestamp,
+            "localBefore": [
+                "phase": phaseKey(currentPhase),
+                "isRunning": isRunning,
+                "totalTime": totalTime,
+                "timeRemaining": timeRemaining,
+            ],
+        ])
         if phaseEnum == .idle {
+            // Save the in-progress local session before remote idle wipes
+            // it. Without this guard, a peer launching and broadcasting
+            // its own idle state destroys minutes/hours of our progress.
+            savePartialIfActive(reason: "remoteIdleMp")
             timer?.cancel(); timer = nil
             isRunning = false
             elapsedBeforePause = 0
@@ -286,7 +314,27 @@ class TimerManager: ObservableObject {
 
     private func applyRemoteState(_ state: StoredTimerState) {
         let remotePhase = state.phase
+        SyncLog.event("applyCk", [
+            "version": state.version,
+            "phase": remotePhase.rawValue,
+            "isRunning": state.isRunning,
+            "totalSeconds": state.totalSeconds,
+            "endTime": SyncLog.opt(state.endTime),
+            "fromDevice": String(state.deviceID.prefix(8)),
+            "updatedAt": state.updatedAt,
+            "localBefore": [
+                "phase": phaseKey(currentPhase),
+                "isRunning": isRunning,
+                "totalTime": totalTime,
+                "timeRemaining": timeRemaining,
+            ],
+        ])
         if remotePhase == .idle {
+            // Save partial local session before remote idle wipes it.
+            // (Same rationale as applyRemoteMessage's idle branch — a
+            // peer that just launched can broadcast an idle that
+            // doesn't reflect our actually-running local session.)
+            savePartialIfActive(reason: "remoteIdleCk")
             timer?.cancel(); timer = nil
             isRunning = false
             elapsedBeforePause = 0
@@ -646,6 +694,44 @@ class TimerManager: ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async { SiteBlocker.block(domains: domains) }
         } else if !shouldBlock && isBlockingActive {
             unblockIfNeeded()
+        }
+    }
+
+    // MARK: - Crash-safe partial save
+
+    /// Persist the in-progress local session before any code path that
+    /// resets engine state in response to a *remote* idle signal (CK or
+    /// Multipeer). Without this guard, a peer launching and broadcasting
+    /// idle destroys our accumulated time silently.
+    private func savePartialIfActive(reason: String) {
+        guard let store = sessionStore, let start = sessionStartTime else { return }
+        let elapsed = currentElapsedSeconds
+        guard elapsed >= 60 else {
+            SyncLog.event("savePartialSkip", [
+                "reason": reason,
+                "elapsed": elapsed,
+                "phase": phaseKey(currentPhase),
+            ])
+            return
+        }
+        SyncLog.event("savePartial", [
+            "reason": reason,
+            "elapsedMin": elapsed / 60.0,
+            "phase": phaseKey(currentPhase),
+            "label": currentLabel,
+            "startTime": start,
+        ])
+        if currentPhase == .work {
+            store.addSession(WorkSession(
+                startTime: start, durationMinutes: elapsed / 60.0,
+                type: .work, label: currentLabel.isEmpty ? nil : currentLabel
+            ))
+        } else {
+            store.addSession(WorkSession(
+                startTime: start, durationMinutes: elapsed / 60.0,
+                type: .shortBreak, label: nil,
+                breakKinds: currentBreakKinds.isEmpty ? nil : currentBreakKinds
+            ))
         }
     }
 
