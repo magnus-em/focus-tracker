@@ -68,6 +68,21 @@ if [ -f "$PROFILE" ]; then
     cp "$PROFILE" "$APP_DIR/embedded.provisionprofile"
 fi
 
+# Prefer xcodebuild's auto-generated .xcent for signing — it includes
+# `com.apple.application-identifier` and `com.apple.developer.team-identifier`,
+# which CloudKit REQUIRES to hand out a container proxy. Our bare
+# Focus.entitlements file in source control omits those (they're per-team
+# values that xcodebuild derives from the provisioning profile).
+# Without them: every CK operation fails with
+#   CKError "Missing Entitlement" — "Trying to initialize a container
+#   without an application ID."
+XCENT="$XCBUILD_DD/Build/Intermediates.noindex/Focus.build/Debug/Focus.build/Focus.app.xcent"
+SIGN_ENTITLEMENTS="Focus.entitlements"
+if [ -f "$XCENT" ]; then
+    SIGN_ENTITLEMENTS="$XCENT"
+    echo "Using xcodebuild-generated entitlements (has application-identifier)."
+fi
+
 # Re-sign with the iCloud entitlements. We need the cert from team
 # MUR9TJXP6S (Magnus Melbourne / Yale account) — that's the team the
 # iCloud container is associated with. The gmail-account cert sits in
@@ -91,10 +106,10 @@ mv /tmp/Focus.app.staged Focus.app
 
 if [ -n "$SIGN_IDENTITY" ]; then
     echo "Signing with: $SIGN_IDENTITY"
-    codesign --force --deep --sign "$SIGN_IDENTITY" --entitlements Focus.entitlements --options runtime Focus.app
+    codesign --force --deep --sign "$SIGN_IDENTITY" --entitlements "$SIGN_ENTITLEMENTS" --options runtime Focus.app
 else
     echo "No signing cert found — signing ad-hoc (CloudKit will NOT work)."
-    codesign --force --deep --sign - --entitlements Focus.entitlements Focus.app
+    codesign --force --deep --sign - --entitlements "$SIGN_ENTITLEMENTS" Focus.app
 fi
 
 echo ""
