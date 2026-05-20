@@ -52,12 +52,6 @@ public final class LocalTimerBroadcast: NSObject, ObservableObject {
     /// Called on the main thread when a peer sends us state.
     public var onMessage: ((Message) -> Void)?
 
-    /// Heartbeat that re-kicks discovery. Multipeer sessions don't auto-
-    /// reconnect after a drop; stop+start advertiser/browser to force a
-    /// fresh round of discovery (which then triggers `foundPeer` →
-    /// `invitePeer` on the deterministically-elected initiator).
-    private var rediscoveryTimer: Timer?
-
     public init(deviceID: String) {
         self.deviceID = deviceID
 
@@ -80,35 +74,12 @@ public final class LocalTimerBroadcast: NSObject, ObservableObject {
 
         advertiser.startAdvertisingPeer()
         browser.startBrowsingForPeers()
-        startRediscoveryTimer()
     }
 
     deinit {
-        rediscoveryTimer?.invalidate()
         advertiser.stopAdvertisingPeer()
         browser.stopBrowsingForPeers()
         session.disconnect()
-    }
-
-    /// Periodically re-kick the advertiser and browser. Without this, after
-    /// a peer drops (Wi-Fi blip, iPad backgrounds for >30s, sleep/wake)
-    /// neither side re-discovers the other and the link stays dead until
-    /// app relaunch.
-    private func startRediscoveryTimer() {
-        let t = Timer(timeInterval: 20, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            // Skip the cycle if we're already connected — no need to churn.
-            guard self.session.connectedPeers.isEmpty else { return }
-            self.advertiser.stopAdvertisingPeer()
-            self.browser.stopBrowsingForPeers()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                guard let self else { return }
-                self.advertiser.startAdvertisingPeer()
-                self.browser.startBrowsingForPeers()
-            }
-        }
-        RunLoop.main.add(t, forMode: .common)
-        rediscoveryTimer = t
     }
 
     public func send(_ message: Message) {
@@ -133,21 +104,13 @@ extension LocalTimerBroadcast: MCSessionDelegate {
         @unknown default:   stateName = "unknown"
         }
         print("[LocalTimerBroadcast] peer \(peerID.displayName) is \(stateName) (total: \(session.connectedPeers.count))")
-        // On disconnect, immediately bounce discovery so we don't have to
-        // wait up to 20s for the rediscovery timer. Same-wifi reconnect
-        // should happen in seconds, not after the next heartbeat.
-        if state == .notConnected, session.connectedPeers.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self else { return }
-                self.advertiser.stopAdvertisingPeer()
-                self.browser.stopBrowsingForPeers()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    guard let self else { return }
-                    self.advertiser.startAdvertisingPeer()
-                    self.browser.startBrowsingForPeers()
-                }
-            }
-        }
+        // NOTE: do NOT stop/restart advertiser+browser on disconnect.
+        // MCNearbyServiceBrowser/Advertiser drive an internal NSNetService
+        // on its own sync queue; rapid stop+start leaves a stale
+        // CFRunLoopSource that crashes the next runloop iteration with
+        // `_CFAssertMismatchedTypeID` inside `_BrowserCancel`. The
+        // advertiser and browser are already running continuously —
+        // when the peer comes back, `foundPeer` fires naturally.
     }
 
     public func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
