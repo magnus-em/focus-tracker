@@ -53,8 +53,8 @@ struct FocusApp: App {
     @StateObject private var dayStore: DayStore
     @StateObject private var dashboardController: DashboardWindowController
     @StateObject private var onboardingController: OnboardingWindowController
-    @StateObject private var drillStore: DrillStore
-    @StateObject private var drillController: DrillWindowController
+    @StateObject private var practiceStore: PracticeStore
+    @StateObject private var practiceController: PracticeWindowController
 
     init() {
         runOneShotMigration()
@@ -70,16 +70,21 @@ struct FocusApp: App {
         timer.stateSync = stateSync
         timer.localBroadcast = LocalTimerBroadcast(deviceID: stateSync.deviceID)
 
+        // Construct stores that other stores depend on FIRST so we can
+        // share one instance (rather than two HomeworkStores with separate
+        // ModelContexts diverging on @Published caches).
+        let homework = HomeworkStore(container: focusContainer)
+
         _sessionStore        = StateObject(wrappedValue: store)
         _settings            = StateObject(wrappedValue: appSettings)
         _timerManager        = StateObject(wrappedValue: timer)
         _problemStore        = StateObject(wrappedValue: ProblemStore(container: focusContainer))
-        _homeworkStore       = StateObject(wrappedValue: HomeworkStore(container: focusContainer))
+        _homeworkStore       = StateObject(wrappedValue: homework)
         _scratchStore        = StateObject(wrappedValue: ScratchStore(container: focusContainer))
         _dayStore            = StateObject(wrappedValue: DayStore(container: focusContainer))
         _dashboardController = StateObject(wrappedValue: DashboardWindowController())
-        _drillStore          = StateObject(wrappedValue: DrillStore(container: focusContainer))
-        _drillController     = StateObject(wrappedValue: DrillWindowController())
+        _practiceStore       = StateObject(wrappedValue: PracticeStore(container: focusContainer, homeworkStore: homework))
+        _practiceController  = StateObject(wrappedValue: PracticeWindowController())
         let onboarding = OnboardingWindowController()
         _onboardingController = StateObject(wrappedValue: onboarding)
 
@@ -121,7 +126,8 @@ struct FocusApp: App {
                 homeworkStore: homeworkStore,
                 scratchStore: scratchStore,
                 dayStore: dayStore,
-                drillStore: drillStore,
+                practiceStore: practiceStore,
+                homeworkStoreForPractice: homeworkStore,
                 openDashboard: { [self] in
                     dashboardController.open(
                         sessionStore: sessionStore,
@@ -135,8 +141,8 @@ struct FocusApp: App {
                 openOnboarding: { [self] in
                     onboardingController.open(settings: settings)
                 },
-                openDrill: { [self] in
-                    drillController.open(store: drillStore)
+                openPractice: { [self] in
+                    practiceController.open(store: practiceStore, homeworkStore: homeworkStore)
                 }
             )
             .modelContainer(focusContainer)
@@ -159,10 +165,11 @@ struct PopoverContent: View {
     @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var scratchStore: ScratchStore
     @ObservedObject var dayStore: DayStore
-    @ObservedObject var drillStore: DrillStore
+    @ObservedObject var practiceStore: PracticeStore
+    @ObservedObject var homeworkStoreForPractice: HomeworkStore
     let openDashboard: () -> Void
     let openOnboarding: () -> Void
-    let openDrill: () -> Void
+    let openPractice: () -> Void
 
     @State private var selectedTab = 0
     @State private var showCommitment = false
@@ -193,10 +200,12 @@ struct PopoverContent: View {
             }
     }
 
-    private var drillElapsedShort: String {
-        let s = Int(drillStore.elapsedSeconds)
+    private var practiceElapsedShort: String {
+        let s = Int(practiceStore.elapsedSeconds)
         return String(format: "%02d:%02d", s / 60, s % 60)
     }
+
+    private var dueReviewBadge: Int { homeworkStoreForPractice.dueForReview.count }
 
     private func tabChipButton(icon: String, tag: Int) -> some View {
         let selected = selectedTab == tag
@@ -240,25 +249,33 @@ struct PopoverContent: View {
 
                 Divider()
 
-                // Drill Mode CTA — opens the Stat-110 pacing tracker in
-                // its own window. Active-attempt indicator inline.
+                // Practice Mode CTA — opens the Stat-110 pacing tracker in
+                // its own window. Shows live MM:SS when a session is
+                // active, or "N due" review badge when problems are due.
                 Button {
-                    openDrill()
+                    openPractice()
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "scope")
                             .font(.system(size: 13, weight: .semibold))
-                        if drillStore.isActive {
-                            Text("Drill running · \(drillElapsedShort)")
+                        if practiceStore.isActive {
+                            Text("Practice running · \(practiceElapsedShort)")
                                 .font(.system(size: 13, weight: .semibold))
                         } else {
-                            Text("Drill Mode")
+                            Text("Practice Mode")
                                 .font(.system(size: 13, weight: .semibold))
                             Text("· Stat 110 pacing")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        if !practiceStore.isActive && dueReviewBadge > 0 {
+                            Text("\(dueReviewBadge) due")
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.orange.opacity(0.22)))
+                                .foregroundStyle(.orange)
+                        }
                         Image(systemName: "arrow.up.right.square")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)

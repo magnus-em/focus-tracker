@@ -4,21 +4,20 @@ import SwiftData
 import SwiftUI
 import Combine
 
-/// Engine for "Drill Mode" — the Stat-110-style problem pacing tracker.
+/// Engine for "Practice Mode" — the Stat-110-style problem pacing tracker.
 ///
-/// One instance per Mac process. Hold a single active attempt at a time;
+/// One instance per Mac process. Holds a single active attempt at a time;
 /// completed/abandoned attempts are persisted to SwiftData and the engine
 /// returns to idle. The view binds to `phase` / `elapsedSeconds` /
 /// `hintsPeeked` to render.
 ///
-/// Why a fresh engine rather than reusing `TimerManager`:
-///   • TimerManager counts DOWN against a chosen duration; drills count UP
-///     until the user calls it (solved/stuck/skipped). Different semantics.
-///   • TimerManager pushes its state to peers via TimerStateSync; drills
-///     are private to this Mac (the iPad app stays untouched per spec).
-///   • Drills carry hint/MC counters; the existing timer doesn't.
+/// On every `solved` or `stuck` finish, this also upserts a
+/// `HomeworkProblem` row keyed by `catalogID` so the homework list
+/// reflects the latest attempt's confidence/difficulty/needsReview. The
+/// per-attempt history stays in `StoredDrillAttempt` (kept as the
+/// SwiftData class name to avoid a CloudKit schema migration).
 @MainActor
-final class DrillStore: ObservableObject {
+final class PracticeStore: ObservableObject {
 
     // MARK: - Zone definitions
 
@@ -65,9 +64,9 @@ final class DrillStore: ObservableObject {
 
     // MARK: - Active attempt state
 
-    /// True iff there's a drill currently running (engine timer ticking).
+    /// True iff there's a practice session currently running (engine timer ticking).
     @Published private(set) var isActive: Bool = false
-    /// True iff the active drill is paused.
+    /// True iff the active session is paused.
     @Published private(set) var isPaused: Bool = false
     /// Active seconds elapsed on the current attempt (excludes pauses).
     @Published private(set) var elapsedSeconds: TimeInterval = 0
@@ -75,7 +74,7 @@ final class DrillStore: ObservableObject {
     @Published private(set) var hintsPeeked: Int = 0
     /// Whether the user pivoted to Monte Carlo on this attempt.
     @Published private(set) var monteCarloUsed: Bool = false
-    /// Catalog problem currently being drilled (if any).
+    /// Catalog problem currently being practiced (if any).
     @Published private(set) var activeProblem: Stat110Problem?
 
     /// All completed attempts, newest-first. For the analytics panel.
@@ -89,35 +88,39 @@ final class DrillStore: ObservableObject {
         return .green
     }
 
-    /// Drills completed in the current burst — consecutive attempts with
-    /// no >30min gap. Used to surface a burnout warning.
     var burstCount: Int {
         let gapThreshold: TimeInterval = 30 * 60
         var count = 0
         var lastEnd: Date? = nil
-        for a in attempts {  // newest-first
+        for a in attempts {
             guard let end = a.endTime else { continue }
             if let last = lastEnd, last.timeIntervalSince(end) > gapThreshold { break }
             count += 1
-            lastEnd = a.startTime  // walk backwards through the gap chain
+            lastEnd = a.startTime
         }
         return count
     }
 
-    /// True after the user has racked up enough drills in a short window
-    /// that the framework's "shift gears" guidance applies.
     var shouldSuggestBreak: Bool { burstCount >= 4 }
 
     // MARK: - Plumbing
 
     private let context: ModelContext
+    private weak var homeworkStore: HomeworkStore?
     private var ticker: AnyCancellable?
     private var resumeTime: Date?
     private var accumulatedBeforePause: TimeInterval = 0
 
-    init(container: ModelContainer) {
+    init(container: ModelContainer, homeworkStore: HomeworkStore? = nil) {
         self.context = ModelContext(container)
+        self.homeworkStore = homeworkStore
         refresh()
+    }
+
+    /// Wire up the HomeworkStore after init. The App's init constructs
+    /// both stores at the same time so we can't pass it inline.
+    func attach(homeworkStore: HomeworkStore) {
+        self.homeworkStore = homeworkStore
     }
 
     private func refresh() {
@@ -130,9 +133,6 @@ final class DrillStore: ObservableObject {
 
     // MARK: - Controls
 
-    /// Begin a new attempt against the given catalog problem (or a freeform
-    /// one with just title/source). If an attempt is already running, no-op
-    /// — caller must finish/abandon first.
     func start(problem: Stat110Problem) {
         guard !isActive else { return }
         activeProblem = problem
@@ -174,50 +174,121 @@ final class DrillStore: ObservableObject {
             }
     }
 
-    /// Increment the peek counter. The view nudges the user to look at
-    /// only the FIRST LINE of the solution — we trust them to do that;
-    /// we just count it.
     func peekHint() {
         guard isActive else { return }
         hintsPeeked += 1
     }
 
-    /// Flag the attempt as having pivoted to a Monte Carlo simulation.
-    /// Idempotent — first toggle marks it; subsequent calls no-op.
     func markMonteCarlo() {
         guard isActive else { return }
         monteCarloUsed = true
     }
 
-    /// Finish the active attempt with the given outcome. Persists to
-    /// SwiftData and returns to idle. Confidence only meaningful for
-    /// .solved; ignored otherwise.
-    func finish(outcome: DrillOutcome, confidence: Int? = nil, notes: String = "") {
+    // MARK: - Finish (three outcome paths, each syncing to homework when relevant)
+
+    /// Solved — log attempt + upsert homework row with chosen confidence.
+    /// needsReview is left to the caller; default in the UI is true for
+    /// Shaky/Struggled, false for Got-it.
+    func finishSolved(confidence: Confidence,
+                      difficulty: ProblemDifficulty,
+                      needsReview: Bool,
+                      notes: String) {
         guard isActive else { return }
-        // If running, freeze elapsed before save.
-        if !isPaused, let resume = resumeTime {
-            accumulatedBeforePause += Date().timeIntervalSince(resume)
+        let elapsed = freezeElapsed()
+        persistAttempt(outcome: .solved, notes: notes,
+                       confidenceInt: intFor(confidence),
+                       elapsed: elapsed)
+        if let p = activeProblem {
+            homeworkStore?.upsertFromPractice(
+                catalogID: p.id,
+                title: p.title,
+                source: p.sourceLabel,
+                difficulty: difficulty,
+                confidence: confidence,
+                needsReview: needsReview,
+                notes: notes,
+                url: Stat110Catalog.problemSet(number: p.setNumber)?.pdfURL ?? "",
+                solveMinutes: Int(elapsed / 60)
+            )
         }
-        let attempt = StoredDrillAttempt()
-        attempt.catalogID = activeProblem?.id
-        attempt.title = activeProblem?.title ?? ""
-        attempt.source = activeProblem?.sourceLabel ?? ""
-        attempt.startTime = Date().addingTimeInterval(-accumulatedBeforePause)
-        attempt.endTime = Date()
-        attempt.activeSeconds = accumulatedBeforePause
-        attempt.hintsPeeked = hintsPeeked
-        attempt.monteCarloUsed = monteCarloUsed
-        attempt.outcome = outcome
-        attempt.confidence = (outcome == .solved) ? (confidence ?? 0) : 0
-        attempt.notes = notes
-        context.insert(attempt)
-        try? context.save()
         resetActive()
         refresh()
     }
 
-    /// Cancel without recording. Used if user closes the window mid-drill;
-    /// we don't want stray rows polluting analytics.
+    /// Stuck — used hints/MC and still couldn't crack it. Mark homework
+    /// row as struggled + needsReview so it bubbles up tomorrow.
+    func finishStuck(notes: String) {
+        guard isActive else { return }
+        let elapsed = freezeElapsed()
+        persistAttempt(outcome: .stuck, notes: notes,
+                       confidenceInt: intFor(.struggled), elapsed: elapsed)
+        if let p = activeProblem {
+            homeworkStore?.upsertFromPractice(
+                catalogID: p.id,
+                title: p.title,
+                source: p.sourceLabel,
+                difficulty: .hard,
+                confidence: .struggled,
+                needsReview: true,
+                notes: notes,
+                url: Stat110Catalog.problemSet(number: p.setNumber)?.pdfURL ?? "",
+                solveMinutes: Int(elapsed / 60)
+            )
+        }
+        resetActive()
+        refresh()
+    }
+
+    /// Skipped — bailed early without engaging. Log attempt only; don't
+    /// pollute the homework list with this.
+    func finishSkipped(notes: String) {
+        guard isActive else { return }
+        let elapsed = freezeElapsed()
+        persistAttempt(outcome: .skipped, notes: notes,
+                       confidenceInt: 0, elapsed: elapsed)
+        resetActive()
+        refresh()
+    }
+
+    private func freezeElapsed() -> TimeInterval {
+        if !isPaused, let resume = resumeTime {
+            accumulatedBeforePause += Date().timeIntervalSince(resume)
+        }
+        return accumulatedBeforePause
+    }
+
+    @discardableResult
+    private func persistAttempt(outcome: DrillOutcome,
+                                notes: String,
+                                confidenceInt: Int,
+                                elapsed: TimeInterval) -> StoredDrillAttempt {
+        let attempt = StoredDrillAttempt()
+        attempt.catalogID = activeProblem?.id
+        attempt.title = activeProblem?.title ?? ""
+        attempt.source = activeProblem?.sourceLabel ?? ""
+        attempt.startTime = Date().addingTimeInterval(-elapsed)
+        attempt.endTime = Date()
+        attempt.activeSeconds = elapsed
+        attempt.hintsPeeked = hintsPeeked
+        attempt.monteCarloUsed = monteCarloUsed
+        attempt.outcome = outcome
+        attempt.confidence = confidenceInt
+        attempt.notes = notes
+        context.insert(attempt)
+        try? context.save()
+        return attempt
+    }
+
+    /// Map Confidence → stored 1-5 int (keeps StoredDrillAttempt's int field
+    /// usable; no schema migration). 5 solid · 3 shaky · 1 struggled.
+    private func intFor(_ c: Confidence) -> Int {
+        switch c {
+        case .solid: return 5
+        case .shaky: return 3
+        case .struggled: return 1
+        }
+    }
+
     func discardActive() {
         guard isActive else { return }
         resetActive()
@@ -237,13 +308,11 @@ final class DrillStore: ObservableObject {
 
     // MARK: - Analytics
 
-    /// Total drills done today.
-    var drillsToday: Int {
+    var sessionsToday: Int {
         let cal = Calendar.current
         return attempts.filter { cal.isDateInToday($0.startTime) }.count
     }
 
-    /// Today's solve rate (solved / total). 0 if no drills today.
     var solveRateToday: Double {
         let today = attempts.filter { Calendar.current.isDateInToday($0.startTime) }
         guard !today.isEmpty else { return 0 }
@@ -251,7 +320,6 @@ final class DrillStore: ObservableObject {
         return Double(solved) / Double(today.count)
     }
 
-    /// Total minutes spent drilling today.
     var minutesToday: Double {
         let cal = Calendar.current
         return attempts

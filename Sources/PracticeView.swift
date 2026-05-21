@@ -4,27 +4,27 @@ import SwiftUI
 
 // MARK: - Window controller
 
-/// Standalone "Drill Mode" window. Same pattern as DashboardWindowController:
+/// Standalone "Practice Mode" window. Same pattern as DashboardWindowController:
 /// open/refocus, don't release on close (so the same instance persists across
 /// open cycles and we don't lose the in-flight attempt if the user accidentally
 /// hits the red dot).
 @MainActor
-class DrillWindowController: ObservableObject {
+class PracticeWindowController: ObservableObject {
     private var window: NSWindow?
 
-    func open(store: DrillStore, problem: Stat110Problem? = nil) {
+    func open(store: PracticeStore, homeworkStore: HomeworkStore, problem: Stat110Problem? = nil) {
         if let w = window {
             w.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             if let p = problem, !store.isActive { store.start(problem: p) }
             return
         }
-        let view = DrillView(store: store, initialProblem: problem)
+        let view = PracticeView(store: store, homeworkStore: homeworkStore, initialProblem: problem)
         let vc = NSHostingController(rootView: view)
         let w = NSWindow(contentViewController: vc)
-        w.title = "Drill Mode"
-        w.setContentSize(NSSize(width: 560, height: 640))
-        w.minSize = NSSize(width: 480, height: 560)
+        w.title = "Practice Mode"
+        w.setContentSize(NSSize(width: 580, height: 680))
+        w.minSize = NSSize(width: 500, height: 580)
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         w.isReleasedWhenClosed = false
         w.center()
@@ -36,8 +36,9 @@ class DrillWindowController: ObservableObject {
 
 // MARK: - Main view
 
-struct DrillView: View {
-    @ObservedObject var store: DrillStore
+struct PracticeView: View {
+    @ObservedObject var store: PracticeStore
+    @ObservedObject var homeworkStore: HomeworkStore
     let initialProblem: Stat110Problem?
 
     @State private var showSolvedSheet = false
@@ -71,7 +72,7 @@ struct DrillView: View {
             MonteCarloSheet(store: store, isPresented: $showMonteCarloSheet)
         }
         .sheet(isPresented: $showPicker) {
-            DrillProblemPicker(isPresented: $showPicker) { p in
+            PracticeProblemPicker(homeworkStore: homeworkStore, isPresented: $showPicker) { p in
                 store.start(problem: p)
             }
         }
@@ -80,49 +81,104 @@ struct DrillView: View {
     // MARK: - Idle
 
     private var idleView: some View {
-        VStack(spacing: 18) {
-            Text("Drill Mode")
-                .font(.system(size: 22, weight: .semibold))
+        ScrollView {
+            VStack(spacing: 18) {
+                Text("Practice Mode")
+                    .font(.system(size: 22, weight: .semibold))
 
-            Text("Pick a Stat 110 problem and drill it under the 20-minute productive-struggle rule. Green zone you struggle. Yellow zone you check in. Red zone you pivot — peek a hint, run a Monte Carlo, or log & move on.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
+                Text("Pick a problem and practice it under the 20-minute productive-struggle rule. Green you struggle. Yellow you check in. Red you pivot — peek a hint, run a Monte Carlo, or log & move on.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
 
-            Button {
-                showPicker = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "play.fill")
-                    Text("Start a Drill").fontWeight(.semibold)
+                Button {
+                    showPicker = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                        Text("Start a Practice Session").fontWeight(.semibold)
+                    }
+                    .padding(.horizontal, 18).padding(.vertical, 9)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.15)))
+                    .foregroundStyle(Color.accentColor)
                 }
-                .padding(.horizontal, 18).padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.15)))
-                .foregroundStyle(Color.accentColor)
+                .buttonStyle(.plain)
+
+                if !homeworkStore.dueForReview.isEmpty {
+                    reviewQueueSection
+                }
+
+                Divider().padding(.vertical, 4)
+
+                todayStatsRow
+
+                if !store.attempts.isEmpty {
+                    recentAttemptsList
+                } else {
+                    Text("No practice sessions logged yet.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 6)
+                }
             }
-            .buttonStyle(.plain)
-
-            Divider().padding(.vertical, 4)
-
-            todayStatsRow
-
-            if !store.attempts.isEmpty {
-                recentAttemptsList
-            } else {
-                Text("No drills logged yet.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 6)
-            }
-
-            Spacer()
         }
+    }
+
+    // MARK: - Review queue (due-for-review problems)
+
+    private var reviewQueueSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "bell.badge.fill").foregroundStyle(.orange)
+                Text("Due for review (\(homeworkStore.dueForReview.count))")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            ForEach(homeworkStore.dueForReview.prefix(6)) { hw in
+                reviewRow(hw)
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.08)))
+    }
+
+    private func reviewRow(_ hw: HomeworkProblem) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: confidenceIcon(hw.confidence))
+                .foregroundStyle(confidenceColor(hw.confidence))
+                .font(.system(size: 11))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(hw.title.isEmpty ? hw.source : hw.title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Text("\(hw.source) · \(hw.confidence.rawValue)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if let catID = hw.catalogID,
+               let problem = Stat110Catalog.problem(id: catID) {
+                Button {
+                    store.start(problem: problem)
+                } label: {
+                    Text("Practice")
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.18)))
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4).padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.5)))
     }
 
     private var todayStatsRow: some View {
         HStack(spacing: 14) {
-            statCard(label: "Today", value: "\(store.drillsToday)", sub: "drills")
+            statCard(label: "Today", value: "\(store.sessionsToday)", sub: "sessions")
             statCard(label: "Solved", value: String(format: "%.0f%%", store.solveRateToday * 100), sub: "solve rate")
             statCard(label: "Time", value: fmtMins(store.minutesToday), sub: "active")
         }
@@ -141,17 +197,14 @@ struct DrillView: View {
 
     private var recentAttemptsList: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Recent attempts")
+            Text("Recent sessions")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(store.attempts.prefix(15)) { a in
-                        attemptRow(a)
-                    }
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(store.attempts.prefix(20)) { a in
+                    attemptRow(a)
                 }
             }
-            .frame(maxHeight: 220)
         }
     }
 
@@ -233,7 +286,6 @@ struct DrillView: View {
                 burnoutBanner
             }
 
-            // Counters
             HStack(spacing: 14) {
                 counterChip(label: "Hints peeked", value: "\(store.hintsPeeked)")
                 counterChip(label: "Monte Carlo", value: store.monteCarloUsed ? "used" : "—")
@@ -242,11 +294,9 @@ struct DrillView: View {
 
             Spacer(minLength: 8)
 
-            // Action row
             actionButtons
 
-            // Discard exit (small, low-emphasis)
-            Button("Discard attempt") {
+            Button("Discard session") {
                 store.discardActive()
             }
             .font(.system(size: 10))
@@ -262,13 +312,12 @@ struct DrillView: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.gray.opacity(0.12))
                     .frame(height: 6)
-                // Yellow & red zone markers (15 / 20 min)
                 HStack(spacing: 0) {
-                    Capsule().fill(DrillStore.Zone.green.color.opacity(0.5))
+                    Capsule().fill(PracticeStore.Zone.green.color.opacity(0.5))
                         .frame(width: geo.size.width * (15.0 / 30.0), height: 6)
-                    Capsule().fill(DrillStore.Zone.yellow.color.opacity(0.5))
+                    Capsule().fill(PracticeStore.Zone.yellow.color.opacity(0.5))
                         .frame(width: geo.size.width * (5.0 / 30.0), height: 6)
-                    Capsule().fill(DrillStore.Zone.red.color.opacity(0.5))
+                    Capsule().fill(PracticeStore.Zone.red.color.opacity(0.5))
                         .frame(width: geo.size.width * (10.0 / 30.0), height: 6)
                 }
                 Capsule().fill(store.zone.color)
@@ -282,7 +331,7 @@ struct DrillView: View {
     private var burnoutBanner: some View {
         HStack(spacing: 6) {
             Image(systemName: "leaf.fill")
-            Text("\(store.burstCount) drills in this burst. Consider a 10-min walk after this one.")
+            Text("\(store.burstCount) sessions in this burst. Consider a 10-min walk after this one.")
                 .font(.system(size: 11))
         }
         .foregroundStyle(.orange)
@@ -304,7 +353,6 @@ struct DrillView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 8) {
-            // Primary: solved (always visible, big green)
             Button {
                 showSolvedSheet = true
             } label: {
@@ -319,7 +367,6 @@ struct DrillView: View {
             }
             .buttonStyle(.plain)
 
-            // Pause/resume + nudges
             HStack(spacing: 8) {
                 Button {
                     store.isPaused ? store.resume() : store.pause()
@@ -381,13 +428,11 @@ struct DrillView: View {
         }
     }
 
-    /// Yellow/red zones use the framework's intended call to action — that's
-    /// when nudge buttons should pop visually.
     private var nudgeColor: Color {
         switch store.zone {
         case .green:  return .secondary
-        case .yellow: return DrillStore.Zone.yellow.color
-        case .red:    return DrillStore.Zone.red.color
+        case .yellow: return PracticeStore.Zone.yellow.color
+        case .red:    return PracticeStore.Zone.red.color
         }
     }
 
@@ -419,6 +464,22 @@ struct DrillView: View {
         }
     }
 
+    private func confidenceIcon(_ c: Confidence) -> String {
+        switch c {
+        case .solid:     return "checkmark.seal.fill"
+        case .shaky:     return "questionmark.circle"
+        case .struggled: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func confidenceColor(_ c: Confidence) -> Color {
+        switch c {
+        case .solid:     return .green
+        case .shaky:     return .orange
+        case .struggled: return .red
+        }
+    }
+
     private func fmtMins(_ m: Double) -> String {
         let total = Int(m * 60)
         return String(format: "%dm %02ds", total / 60, total % 60)
@@ -431,49 +492,67 @@ struct DrillView: View {
     }
 }
 
-// MARK: - Solved sheet (confidence + notes)
+// MARK: - Solved sheet
 
 private struct SolvedSheet: View {
-    @ObservedObject var store: DrillStore
+    @ObservedObject var store: PracticeStore
     @Binding var isPresented: Bool
-    @State private var confidence: Int = 3
+
+    @State private var confidence: Confidence = .solid
+    @State private var difficulty: ProblemDifficulty = .medium
+    @State private var needsReview: Bool = false
     @State private var notes: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Locked in.")
                 .font(.system(size: 18, weight: .semibold))
-            Text("How confident are you that you can re-derive this cold tomorrow?")
-                .font(.system(size: 12))
+            Text("This gets logged to your homework list so the review queue can resurface it later.")
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 6) {
-                ForEach(1...5, id: \.self) { i in
-                    Button { confidence = i } label: {
-                        Text("\(i)")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .frame(width: 36, height: 36)
-                            .background(
-                                Circle().fill(confidence == i ? Color.green.opacity(0.22) : Color.gray.opacity(0.08))
-                            )
-                            .overlay(
-                                Circle().stroke(confidence == i ? Color.green : Color.clear, lineWidth: 1)
-                            )
-                            .foregroundStyle(confidence == i ? Color.green : Color.primary)
+            // Confidence — uses the same enum the homework section uses
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Confidence")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(Confidence.allCases, id: \.self) { c in
+                        confidenceButton(c)
                     }
-                    .buttonStyle(.plain)
                 }
-                Text("  1 = shaky · 5 = bulletproof")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Difficulty")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ProblemDifficulty.allCases, id: \.self) { d in
+                        difficultyButton(d)
+                    }
+                }
+            }
+
+            Toggle(isOn: $needsReview) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Add to review queue")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Resurface this in Practice Mode on the schedule below.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            // Default to needs-review iff confidence isn't .solid — but
+            // let the user override either way.
+            .onChange(of: confidence) { _, new in
+                needsReview = (new != .solid)
             }
 
             Text("Key insight (optional)")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             TextEditor(text: $notes)
                 .font(.system(size: 12))
-                .frame(height: 90)
+                .frame(height: 80)
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
 
@@ -481,7 +560,10 @@ private struct SolvedSheet: View {
                 Button("Cancel") { isPresented = false }
                 Spacer()
                 Button {
-                    store.finish(outcome: .solved, confidence: confidence, notes: notes)
+                    store.finishSolved(confidence: confidence,
+                                       difficulty: difficulty,
+                                       needsReview: needsReview,
+                                       notes: notes)
                     isPresented = false
                 } label: {
                     Text("Log Solve").fontWeight(.semibold)
@@ -493,14 +575,53 @@ private struct SolvedSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 380)
+        .frame(width: 420)
+        .onAppear {
+            // Default review-flag from initial confidence (.solid → off)
+            needsReview = (confidence != .solid)
+        }
+    }
+
+    private func confidenceButton(_ c: Confidence) -> some View {
+        let selected = confidence == c
+        let tint: Color = {
+            switch c {
+            case .solid: return .green
+            case .shaky: return .orange
+            case .struggled: return .red
+            }
+        }()
+        return Button { confidence = c } label: {
+            Text(c.rawValue)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 6).fill(selected ? tint.opacity(0.22) : Color.gray.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? tint : .clear, lineWidth: 1))
+                .foregroundStyle(selected ? tint : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func difficultyButton(_ d: ProblemDifficulty) -> some View {
+        let selected = difficulty == d
+        return Button { difficulty = d } label: {
+            Text(d.rawValue)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.18) : Color.gray.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? Color.accentColor : .clear, lineWidth: 1))
+                .foregroundStyle(selected ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - Stuck sheet (skipped vs stuck)
+// MARK: - Stuck sheet
 
 private struct StuckSheet: View {
-    @ObservedObject var store: DrillStore
+    @ObservedObject var store: PracticeStore
     @Binding var isPresented: Bool
     @State private var notes: String = ""
 
@@ -508,13 +629,12 @@ private struct StuckSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Moving on is a skill.")
                 .font(.system(size: 18, weight: .semibold))
-            Text("Knowing when to defer is a real interview signal. We're logging this so you can come back to it in a few days with fresh eyes.")
+            Text("This problem will get added to your review queue so you come back to it in a day with fresh eyes.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
             Text("What blocked you? (optional)")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             TextEditor(text: $notes)
                 .font(.system(size: 12))
                 .frame(height: 80)
@@ -523,12 +643,12 @@ private struct StuckSheet: View {
 
             VStack(spacing: 6) {
                 Button {
-                    store.finish(outcome: .stuck, notes: notes)
+                    store.finishStuck(notes: notes)
                     isPresented = false
                 } label: {
                     HStack {
-                        Image(systemName: "exclamationmark.circle")
-                        Text("Log as Stuck (used the nudges)")
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Log as Stuck — add to review queue")
                             .fontWeight(.medium)
                     }
                     .frame(maxWidth: .infinity)
@@ -539,12 +659,12 @@ private struct StuckSheet: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    store.finish(outcome: .skipped, notes: notes)
+                    store.finishSkipped(notes: notes)
                     isPresented = false
                 } label: {
                     HStack {
                         Image(systemName: "arrow.right.circle")
-                        Text("Skip (didn't fit my current toolkit)")
+                        Text("Skip — not in my toolkit yet")
                             .fontWeight(.medium)
                     }
                     .frame(maxWidth: .infinity)
@@ -567,7 +687,7 @@ private struct StuckSheet: View {
 // MARK: - Monte Carlo sheet
 
 private struct MonteCarloSheet: View {
-    @ObservedObject var store: DrillStore
+    @ObservedObject var store: PracticeStore
     @Binding var isPresented: Bool
     @State private var copied = false
 
@@ -594,7 +714,7 @@ private struct MonteCarloSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pivot to simulation")
                 .font(.system(size: 18, weight: .semibold))
-            Text("Often the act of formalizing the rules in code makes the math obvious. Copy this template, edit `run_one_trial`, run it. We'll mark this attempt as having used MC.")
+            Text("Often the act of formalizing the rules in code makes the math obvious. Copy this template, edit `run_one_trial`, run it. We'll mark this session as having used MC.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
@@ -631,9 +751,10 @@ private struct MonteCarloSheet: View {
     }
 }
 
-// MARK: - Problem picker (lightweight — Stat 110 catalog)
+// MARK: - Problem picker
 
-private struct DrillProblemPicker: View {
+private struct PracticeProblemPicker: View {
+    @ObservedObject var homeworkStore: HomeworkStore
     @Binding var isPresented: Bool
     let onPick: (Stat110Problem) -> Void
 
@@ -643,7 +764,7 @@ private struct DrillProblemPicker: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Pick a problem to drill")
+                Text("Pick a problem to practice")
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 Button("Cancel") { isPresented = false }
@@ -691,6 +812,10 @@ private struct DrillProblemPicker: View {
                                                 }
                                             }
                                             Spacer()
+                                            // Status from homework store
+                                            if let hw = homeworkStore.items.first(where: { $0.catalogID == p.id }) {
+                                                statusPill(hw)
+                                            }
                                         }
                                         .padding(.vertical, 5).padding(.horizontal, 8)
                                         .contentShape(Rectangle())
@@ -709,7 +834,24 @@ private struct DrillProblemPicker: View {
                 .padding(.bottom, 12)
             }
         }
-        .frame(width: 460, height: 520)
+        .frame(width: 500, height: 560)
+    }
+
+    @ViewBuilder
+    private func statusPill(_ hw: HomeworkProblem) -> some View {
+        let (label, color): (String, Color) = {
+            if hw.isDueForReview { return ("Due", .orange) }
+            switch hw.confidence {
+            case .solid:     return ("✓", .green)
+            case .shaky:     return ("Shaky", .orange)
+            case .struggled: return ("Struggled", .red)
+            }
+        }()
+        Text(label)
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.18)))
+            .foregroundStyle(color)
     }
 
     private func filteredProblems(_ set: Stat110ProblemSet) -> [Stat110Problem] {
