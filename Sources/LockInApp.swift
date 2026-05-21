@@ -53,6 +53,8 @@ struct FocusApp: App {
     @StateObject private var dayStore: DayStore
     @StateObject private var dashboardController: DashboardWindowController
     @StateObject private var onboardingController: OnboardingWindowController
+    @StateObject private var drillStore: DrillStore
+    @StateObject private var drillController: DrillWindowController
 
     init() {
         runOneShotMigration()
@@ -76,6 +78,8 @@ struct FocusApp: App {
         _scratchStore        = StateObject(wrappedValue: ScratchStore(container: focusContainer))
         _dayStore            = StateObject(wrappedValue: DayStore(container: focusContainer))
         _dashboardController = StateObject(wrappedValue: DashboardWindowController())
+        _drillStore          = StateObject(wrappedValue: DrillStore(container: focusContainer))
+        _drillController     = StateObject(wrappedValue: DrillWindowController())
         let onboarding = OnboardingWindowController()
         _onboardingController = StateObject(wrappedValue: onboarding)
 
@@ -117,6 +121,7 @@ struct FocusApp: App {
                 homeworkStore: homeworkStore,
                 scratchStore: scratchStore,
                 dayStore: dayStore,
+                drillStore: drillStore,
                 openDashboard: { [self] in
                     dashboardController.open(
                         sessionStore: sessionStore,
@@ -129,6 +134,9 @@ struct FocusApp: App {
                 },
                 openOnboarding: { [self] in
                     onboardingController.open(settings: settings)
+                },
+                openDrill: { [self] in
+                    drillController.open(store: drillStore)
                 }
             )
             .modelContainer(focusContainer)
@@ -151,8 +159,10 @@ struct PopoverContent: View {
     @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var scratchStore: ScratchStore
     @ObservedObject var dayStore: DayStore
+    @ObservedObject var drillStore: DrillStore
     let openDashboard: () -> Void
     let openOnboarding: () -> Void
+    let openDrill: () -> Void
 
     @State private var selectedTab = 0
     @State private var showCommitment = false
@@ -181,6 +191,11 @@ struct PopoverContent: View {
                     showCommitment = true
                 }
             }
+    }
+
+    private var drillElapsedShort: String {
+        let s = Int(drillStore.elapsedSeconds)
+        return String(format: "%02d:%02d", s / 60, s % 60)
     }
 
     private func tabChipButton(icon: String, tag: Int) -> some View {
@@ -224,6 +239,45 @@ struct PopoverContent: View {
                 .frame(height: 480)
 
                 Divider()
+
+                // Drill Mode CTA — opens the Stat-110 pacing tracker in
+                // its own window. Active-attempt indicator inline.
+                Button {
+                    openDrill()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "scope")
+                            .font(.system(size: 13, weight: .semibold))
+                        if drillStore.isActive {
+                            Text("Drill running · \(drillElapsedShort)")
+                                .font(.system(size: 13, weight: .semibold))
+                        } else {
+                            Text("Drill Mode")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("· Stat 110 pacing")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(Color(red: 0.27, green: 0.62, blue: 0.83))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.22), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
 
                 // Prominent Dashboard CTA — clearer affordance than the
                 // tiny secondary link we used before.

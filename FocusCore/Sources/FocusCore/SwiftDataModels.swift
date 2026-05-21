@@ -266,6 +266,68 @@ public final class StoredTimerState {
     }
 }
 
+// MARK: - Drill attempts
+
+/// One recorded run at a specific problem in "Drill Mode" (the pacing
+/// tracker built around the Stat-110-style 20-minute productive-struggle
+/// framework). Each attempt logs: how long the user actively spent on it,
+/// how many solution-line nudges they peeked, whether they pivoted to a
+/// Monte Carlo sim, the outcome, and an optional confidence rating.
+///
+/// Why a separate entity (vs. extending StoredHomework): a single problem
+/// can have multiple drill attempts over time (spaced repetition), and
+/// the drill-specific signals (hints peeked, MC used, outcome) don't make
+/// sense on the homework log. Keeping it separate also means the existing
+/// homework/problem workflow is untouched.
+@Model
+public final class StoredDrillAttempt {
+    public var id: UUID = UUID()
+    /// Stable ID into `Stat110Catalog` (e.g. `stat110-hw2-hw-3`). Nil for
+    /// freeform drills not tied to a catalog problem.
+    public var catalogID: String? = nil
+    /// Display title at drill-start time. Snapshot so renames in the
+    /// catalog don't lose history.
+    public var title: String = ""
+    /// "Stat 110 HW2 Homework 3 — Three children…" etc.
+    public var source: String = ""
+    public var startTime: Date = Date()
+    public var endTime: Date? = nil
+    /// Active seconds (paused time excluded). The drill engine ticks this
+    /// every 0.5s while not paused; persisted on stop.
+    public var activeSeconds: Double = 0
+    public var hintsPeeked: Int = 0
+    public var monteCarloUsed: Bool = false
+    /// "solved" | "stuck" | "skipped" — see DrillOutcome.
+    public var outcomeRaw: String = DrillOutcome.stuck.rawValue
+    /// 1-5, only meaningful when outcome=solved.
+    public var confidence: Int = 0
+    public var notes: String = ""
+
+    public init() {}
+
+    public var outcome: DrillOutcome {
+        get { DrillOutcome(rawValue: outcomeRaw) ?? .stuck }
+        set { outcomeRaw = newValue.rawValue }
+    }
+}
+
+public enum DrillOutcome: String, Sendable, CaseIterable {
+    /// Problem fully worked through.
+    case solved
+    /// Used hints / MC and still couldn't crack it. Defer for later.
+    case stuck
+    /// Bailed early without hints — usually means topic was wrong.
+    case skipped
+
+    public var displayName: String {
+        switch self {
+        case .solved:  return "Solved"
+        case .stuck:   return "Stuck"
+        case .skipped: return "Skipped"
+        }
+    }
+}
+
 // MARK: - Schema
 
 public enum FocusSchema {
@@ -276,5 +338,6 @@ public enum FocusSchema {
         StoredDayRecord.self,
         StoredScratchItem.self,
         StoredTimerState.self,
+        StoredDrillAttempt.self,
     ]
 }

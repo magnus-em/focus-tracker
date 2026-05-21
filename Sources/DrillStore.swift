@@ -1,0 +1,261 @@
+import Foundation
+import FocusCore
+import SwiftData
+import SwiftUI
+import Combine
+
+/// Engine for "Drill Mode" — the Stat-110-style problem pacing tracker.
+///
+/// One instance per Mac process. Hold a single active attempt at a time;
+/// completed/abandoned attempts are persisted to SwiftData and the engine
+/// returns to idle. The view binds to `phase` / `elapsedSeconds` /
+/// `hintsPeeked` to render.
+///
+/// Why a fresh engine rather than reusing `TimerManager`:
+///   • TimerManager counts DOWN against a chosen duration; drills count UP
+///     until the user calls it (solved/stuck/skipped). Different semantics.
+///   • TimerManager pushes its state to peers via TimerStateSync; drills
+///     are private to this Mac (the iPad app stays untouched per spec).
+///   • Drills carry hint/MC counters; the existing timer doesn't.
+@MainActor
+final class DrillStore: ObservableObject {
+
+    // MARK: - Zone definitions
+
+    /// The three zones from the framework. Boundaries are minute-marks of
+    /// active (paused-excluded) time on the current attempt.
+    enum Zone {
+        /// 0–15 min: productive struggle. Stay quiet.
+        case green
+        /// 15–20 min: approaching wall. Soft check-in.
+        case yellow
+        /// 20+ min: wall reached. Offer the three escape valves.
+        case red
+
+        static let yellowAt: TimeInterval = 15 * 60
+        static let redAt: TimeInterval = 20 * 60
+
+        var label: String {
+            switch self {
+            case .green:  return "Productive struggle"
+            case .yellow: return "Approaching the wall"
+            case .red:    return "Wall reached — time to pivot"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .green:  return Color(red: 0.40, green: 0.78, blue: 0.45)
+            case .yellow: return Color(red: 0.95, green: 0.74, blue: 0.30)
+            case .red:    return Color(red: 0.96, green: 0.36, blue: 0.36)
+            }
+        }
+
+        var coachingLine: String {
+            switch self {
+            case .green:
+                return "Get a feel for the structure. Where are the symmetries?"
+            case .yellow:
+                return "Are you actively writing, or staring? If staring, take a nudge."
+            case .red:
+                return "Pivot. Peek one line, run a Monte Carlo, or log & move on. All valid."
+            }
+        }
+    }
+
+    // MARK: - Active attempt state
+
+    /// True iff there's a drill currently running (engine timer ticking).
+    @Published private(set) var isActive: Bool = false
+    /// True iff the active drill is paused.
+    @Published private(set) var isPaused: Bool = false
+    /// Active seconds elapsed on the current attempt (excludes pauses).
+    @Published private(set) var elapsedSeconds: TimeInterval = 0
+    /// Number of solution-line peeks on the current attempt.
+    @Published private(set) var hintsPeeked: Int = 0
+    /// Whether the user pivoted to Monte Carlo on this attempt.
+    @Published private(set) var monteCarloUsed: Bool = false
+    /// Catalog problem currently being drilled (if any).
+    @Published private(set) var activeProblem: Stat110Problem?
+
+    /// All completed attempts, newest-first. For the analytics panel.
+    @Published private(set) var attempts: [StoredDrillAttempt] = []
+
+    // MARK: - Computed
+
+    var zone: Zone {
+        if elapsedSeconds >= Zone.redAt { return .red }
+        if elapsedSeconds >= Zone.yellowAt { return .yellow }
+        return .green
+    }
+
+    /// Drills completed in the current burst — consecutive attempts with
+    /// no >30min gap. Used to surface a burnout warning.
+    var burstCount: Int {
+        let gapThreshold: TimeInterval = 30 * 60
+        var count = 0
+        var lastEnd: Date? = nil
+        for a in attempts {  // newest-first
+            guard let end = a.endTime else { continue }
+            if let last = lastEnd, last.timeIntervalSince(end) > gapThreshold { break }
+            count += 1
+            lastEnd = a.startTime  // walk backwards through the gap chain
+        }
+        return count
+    }
+
+    /// True after the user has racked up enough drills in a short window
+    /// that the framework's "shift gears" guidance applies.
+    var shouldSuggestBreak: Bool { burstCount >= 4 }
+
+    // MARK: - Plumbing
+
+    private let context: ModelContext
+    private var ticker: AnyCancellable?
+    private var resumeTime: Date?
+    private var accumulatedBeforePause: TimeInterval = 0
+
+    init(container: ModelContainer) {
+        self.context = ModelContext(container)
+        refresh()
+    }
+
+    private func refresh() {
+        var descriptor = FetchDescriptor<StoredDrillAttempt>(
+            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+        )
+        descriptor.includePendingChanges = true
+        attempts = (try? context.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - Controls
+
+    /// Begin a new attempt against the given catalog problem (or a freeform
+    /// one with just title/source). If an attempt is already running, no-op
+    /// — caller must finish/abandon first.
+    func start(problem: Stat110Problem) {
+        guard !isActive else { return }
+        activeProblem = problem
+        elapsedSeconds = 0
+        accumulatedBeforePause = 0
+        resumeTime = Date()
+        hintsPeeked = 0
+        monteCarloUsed = false
+        isPaused = false
+        isActive = true
+        startTicker()
+    }
+
+    func pause() {
+        guard isActive, !isPaused, let resume = resumeTime else { return }
+        accumulatedBeforePause += Date().timeIntervalSince(resume)
+        elapsedSeconds = accumulatedBeforePause
+        resumeTime = nil
+        isPaused = true
+        ticker?.cancel(); ticker = nil
+    }
+
+    func resume() {
+        guard isActive, isPaused else { return }
+        resumeTime = Date()
+        isPaused = false
+        startTicker()
+    }
+
+    private func startTicker() {
+        ticker = Timer.publish(every: 0.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if let r = self.resumeTime {
+                    self.elapsedSeconds = self.accumulatedBeforePause
+                        + Date().timeIntervalSince(r)
+                }
+            }
+    }
+
+    /// Increment the peek counter. The view nudges the user to look at
+    /// only the FIRST LINE of the solution — we trust them to do that;
+    /// we just count it.
+    func peekHint() {
+        guard isActive else { return }
+        hintsPeeked += 1
+    }
+
+    /// Flag the attempt as having pivoted to a Monte Carlo simulation.
+    /// Idempotent — first toggle marks it; subsequent calls no-op.
+    func markMonteCarlo() {
+        guard isActive else { return }
+        monteCarloUsed = true
+    }
+
+    /// Finish the active attempt with the given outcome. Persists to
+    /// SwiftData and returns to idle. Confidence only meaningful for
+    /// .solved; ignored otherwise.
+    func finish(outcome: DrillOutcome, confidence: Int? = nil, notes: String = "") {
+        guard isActive else { return }
+        // If running, freeze elapsed before save.
+        if !isPaused, let resume = resumeTime {
+            accumulatedBeforePause += Date().timeIntervalSince(resume)
+        }
+        let attempt = StoredDrillAttempt()
+        attempt.catalogID = activeProblem?.id
+        attempt.title = activeProblem?.title ?? ""
+        attempt.source = activeProblem?.sourceLabel ?? ""
+        attempt.startTime = Date().addingTimeInterval(-accumulatedBeforePause)
+        attempt.endTime = Date()
+        attempt.activeSeconds = accumulatedBeforePause
+        attempt.hintsPeeked = hintsPeeked
+        attempt.monteCarloUsed = monteCarloUsed
+        attempt.outcome = outcome
+        attempt.confidence = (outcome == .solved) ? (confidence ?? 0) : 0
+        attempt.notes = notes
+        context.insert(attempt)
+        try? context.save()
+        resetActive()
+        refresh()
+    }
+
+    /// Cancel without recording. Used if user closes the window mid-drill;
+    /// we don't want stray rows polluting analytics.
+    func discardActive() {
+        guard isActive else { return }
+        resetActive()
+    }
+
+    private func resetActive() {
+        ticker?.cancel(); ticker = nil
+        isActive = false
+        isPaused = false
+        elapsedSeconds = 0
+        accumulatedBeforePause = 0
+        resumeTime = nil
+        hintsPeeked = 0
+        monteCarloUsed = false
+        activeProblem = nil
+    }
+
+    // MARK: - Analytics
+
+    /// Total drills done today.
+    var drillsToday: Int {
+        let cal = Calendar.current
+        return attempts.filter { cal.isDateInToday($0.startTime) }.count
+    }
+
+    /// Today's solve rate (solved / total). 0 if no drills today.
+    var solveRateToday: Double {
+        let today = attempts.filter { Calendar.current.isDateInToday($0.startTime) }
+        guard !today.isEmpty else { return 0 }
+        let solved = today.filter { $0.outcome == .solved }.count
+        return Double(solved) / Double(today.count)
+    }
+
+    /// Total minutes spent drilling today.
+    var minutesToday: Double {
+        let cal = Calendar.current
+        return attempts
+            .filter { cal.isDateInToday($0.startTime) }
+            .reduce(0.0) { $0 + $1.activeSeconds / 60.0 }
+    }
+}
