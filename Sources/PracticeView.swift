@@ -82,98 +82,148 @@ struct PracticeView: View {
 
     private var idleView: some View {
         ScrollView {
-            VStack(spacing: 18) {
-                Text("Practice Mode")
-                    .font(.system(size: 22, weight: .semibold))
+            VStack(alignment: .leading, spacing: 16) {
+                // Header — friendlier, less wall-of-text
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Practice Mode")
+                        .font(.system(size: 22, weight: .semibold))
+                    Text("Stat 110 — 20-minute productive struggle. Pick up where you left off or start something new.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
 
-                Text("Pick a problem and practice it under the 20-minute productive-struggle rule. Green you struggle. Yellow you check in. Red you pivot — peek a hint, run a Monte Carlo, or log & move on.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-
+                // Primary action — start a fresh problem from the catalog
                 Button {
                     showPicker = true
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "play.fill")
-                        Text("Start a Practice Session").fontWeight(.semibold)
+                        Image(systemName: "plus.circle.fill")
+                        Text("Browse Stat 110 catalog").fontWeight(.semibold)
+                        Spacer()
+                        if !homeworkStore.dueForReview.isEmpty {
+                            // Subtle review-due chip — discoverable, not nagging
+                            Text("\(homeworkStore.dueForReview.count) due")
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.orange.opacity(0.20)))
+                                .foregroundStyle(.orange)
+                        }
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
-                    .padding(.horizontal, 18).padding(.vertical, 9)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.15)))
+                    .padding(.horizontal, 14).padding(.vertical, 11)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.12)))
                     .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
 
-                if !homeworkStore.dueForReview.isEmpty {
-                    reviewQueueSection
+                // Resume in-progress homework (Stat 110 problems already started
+                // but not solid yet). This is the user's main mid-session
+                // workflow — pick a problem they're already working on, not
+                // a new one from the catalog.
+                if !inProgressHomework.isEmpty {
+                    continueWorkingSection
                 }
 
-                Divider().padding(.vertical, 4)
+                Divider()
 
                 todayStatsRow
 
-                if !store.attempts.isEmpty {
+                if !groupedRecentSessions.isEmpty {
                     recentAttemptsList
                 } else {
                     Text("No practice sessions logged yet.")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
-                        .padding(.top, 6)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    // MARK: - Continue working
+
+    /// Homework items linked to the Stat 110 catalog that the user hasn't
+    /// nailed yet — anything that isn't `.solid` confidence, or that's
+    /// explicitly flagged needsReview. Sorted by review-due first, then
+    /// most-recently-touched.
+    private var inProgressHomework: [HomeworkProblem] {
+        homeworkStore.items
+            .filter { $0.catalogID != nil }
+            .filter { $0.confidence != .solid || $0.needsReview }
+            .sorted { lhs, rhs in
+                // Due-for-review first, then by most-recent date desc
+                switch (lhs.isDueForReview, rhs.isDueForReview) {
+                case (true, false): return true
+                case (false, true): return false
+                default: return lhs.date > rhs.date
+                }
+            }
+    }
+
+    private var continueWorkingSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text("CONTINUE WORKING")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(inProgressHomework.count)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            VStack(spacing: 4) {
+                ForEach(inProgressHomework.prefix(8)) { hw in
+                    continueRow(hw)
                 }
             }
         }
     }
 
-    // MARK: - Review queue (due-for-review problems)
-
-    private var reviewQueueSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "bell.badge.fill").foregroundStyle(.orange)
-                Text("Due for review (\(homeworkStore.dueForReview.count))")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-            }
-            ForEach(homeworkStore.dueForReview.prefix(6)) { hw in
-                reviewRow(hw)
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.08)))
-    }
-
-    private func reviewRow(_ hw: HomeworkProblem) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: confidenceIcon(hw.confidence))
-                .foregroundStyle(confidenceColor(hw.confidence))
-                .font(.system(size: 11))
+    private func continueRow(_ hw: HomeworkProblem) -> some View {
+        let canResume = hw.catalogID.flatMap { Stat110Catalog.problem(id: $0) } != nil
+        return HStack(spacing: 8) {
+            Circle()
+                .fill(confidenceColor(hw.confidence))
+                .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(hw.title.isEmpty ? hw.source : hw.title)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(hw.title.isEmpty ? hw.source : hw.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    if hw.isDueForReview {
+                        Text("DUE")
+                            .font(.system(size: 8, weight: .bold))
+                            .tracking(0.6)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Color.orange.opacity(0.22)))
+                            .foregroundStyle(.orange)
+                    }
+                }
                 Text("\(hw.source) · \(hw.confidence.rawValue)")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
             Spacer()
-            if let catID = hw.catalogID,
+            if canResume, let catID = hw.catalogID,
                let problem = Stat110Catalog.problem(id: catID) {
                 Button {
                     store.start(problem: problem)
                 } label: {
-                    Text("Practice")
+                    Text("Resume")
                         .font(.system(size: 10, weight: .semibold))
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.18)))
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.16)))
                         .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.vertical, 4).padding(.horizontal, 6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.5)))
+        .padding(.vertical, 5).padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.gray.opacity(0.05)))
     }
 
     private var todayStatsRow: some View {
@@ -195,29 +245,61 @@ struct PracticeView: View {
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.08)))
     }
 
+    /// Group attempts by catalogID (or by title for freeform problems)
+    /// so the same problem worked twice doesn't look like a logging bug.
+    /// Each group shows the latest attempt's stats + a count badge.
+    private var groupedRecentSessions: [(key: String, latest: StoredDrillAttempt, count: Int, totalMinutes: Double)] {
+        var buckets: [String: [StoredDrillAttempt]] = [:]
+        var order: [String] = []
+        for a in store.attempts {
+            let key = a.catalogID ?? "freeform:\(a.title)"
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(a)
+        }
+        return order.compactMap { key in
+            let attempts = buckets[key] ?? []
+            guard let latest = attempts.max(by: { $0.startTime < $1.startTime }) else { return nil }
+            let total = attempts.reduce(0.0) { $0 + $1.activeSeconds / 60.0 }
+            return (key: key, latest: latest, count: attempts.count, totalMinutes: total)
+        }
+    }
+
     private var recentAttemptsList: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Recent sessions")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack {
+                Text("RECENT SESSIONS")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(store.attempts.prefix(20)) { a in
-                    attemptRow(a)
+                ForEach(groupedRecentSessions.prefix(20), id: \.key) { g in
+                    groupedAttemptRow(latest: g.latest, count: g.count, totalMinutes: g.totalMinutes)
                 }
             }
         }
     }
 
-    private func attemptRow(_ a: StoredDrillAttempt) -> some View {
+    private func groupedAttemptRow(latest a: StoredDrillAttempt, count: Int, totalMinutes: Double) -> some View {
         HStack(spacing: 8) {
             Image(systemName: outcomeIcon(a.outcome))
                 .foregroundStyle(outcomeColor(a.outcome))
                 .font(.system(size: 11))
             VStack(alignment: .leading, spacing: 1) {
-                Text(a.title.isEmpty ? a.source : a.title)
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                Text("\(a.source) · \(fmtMins(a.activeSeconds / 60.0))" +
+                HStack(spacing: 4) {
+                    Text(a.title.isEmpty ? a.source : a.title)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                    if count > 1 {
+                        Text("×\(count)")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Color.gray.opacity(0.16)))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("\(a.source) · \(fmtMins(totalMinutes))" +
                      (a.hintsPeeked > 0 ? " · \(a.hintsPeeked) hint\(a.hintsPeeked == 1 ? "" : "s")" : "") +
                      (a.monteCarloUsed ? " · MC" : ""))
                     .font(.system(size: 10))
