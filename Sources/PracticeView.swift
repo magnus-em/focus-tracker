@@ -55,6 +55,9 @@ struct PracticeView: View {
     // Polya "things to try" expansion — auto-opens at red, manually-
     // togglable in yellow.
     @State private var polyaExpanded: Bool = false
+    // First-line hint reveal — toggled by the Peek-hint button. Resets
+    // when the active problem changes (handled in onChange below).
+    @State private var hintRevealed: Bool = false
 
     var body: some View {
         Group {
@@ -348,8 +351,12 @@ struct PracticeView: View {
 
     private var activeView: some View {
         ScrollView {
-            VStack(spacing: 18) {
+            VStack(spacing: 16) {
                 problemHeader
+
+                problemBody
+
+                hintReveal
 
                 Divider().opacity(0.4)
 
@@ -394,27 +401,173 @@ struct PracticeView: View {
             if newZone == .red { polyaExpanded = true }
             lastZone = newZone
         }
+        .onChange(of: store.activeProblem?.id) { _, _ in
+            // Reset hint reveal when navigating between problems — each
+            // problem's hint is shown only on explicit peek.
+            hintRevealed = false
+            polyaExpanded = false
+        }
     }
 
     private var problemHeader: some View {
-        VStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let p = store.activeProblem {
-                Text(p.sourceLabel)
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-                Text(p.title)
-                    .font(.system(size: 15, weight: .medium, design: .serif))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 8)
-                if let url = problemURL(p) {
-                    Link(destination: url) {
-                        Label("Open PDF", systemImage: "doc.text")
-                            .font(.system(size: 10))
+                // Top nav row: prev | source-label | PDF | next
+                HStack(spacing: 6) {
+                    Button {
+                        store.navigatePrevious()
+                        hintRevealed = false
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                            .foregroundStyle(store.canNavigatePrevious ? .primary : .tertiary)
                     }
-                    .padding(.top, 1)
+                    .buttonStyle(.plain)
+                    .disabled(!store.canNavigatePrevious)
+                    .help("Previous problem")
+
+                    Text(p.sourceLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    if let url = problemURL(p) {
+                        Link(destination: url) {
+                            Label("PDF", systemImage: "doc.text")
+                                .font(.system(size: 10))
+                        }
+                    }
+                    Button {
+                        store.navigateNext()
+                        hintRevealed = false
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                            .foregroundStyle(store.canNavigateNext ? .primary : .tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!store.canNavigateNext)
+                    .help("Next problem")
+                }
+
+                Text(p.title)
+                    .font(.system(size: 17, weight: .semibold, design: .serif))
+                    .multilineTextAlignment(.leading)
+
+                if p.quantRelevance > 0 {
+                    quantRelevanceRow(p)
                 }
             }
+        }
+    }
+
+    /// Stars row + rationale — shows the user how interview-relevant
+    /// THIS problem is for quant prep. Source of truth lives in the catalog.
+    @ViewBuilder
+    private func quantRelevanceRow(_ p: Stat110Problem) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            HStack(spacing: 2) {
+                ForEach(1...5, id: \.self) { i in
+                    Image(systemName: i <= p.quantRelevance ? "star.fill" : "star")
+                        .font(.system(size: 9))
+                        .foregroundStyle(quantStarColor(p.quantRelevance))
+                }
+            }
+            Text(p.quantRationale)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(quantStarColor(p.quantRelevance).opacity(0.08)))
+    }
+
+    private func quantStarColor(_ rel: Int) -> Color {
+        switch rel {
+        case 5: return Color(red: 0.40, green: 0.78, blue: 0.45)  // green — core
+        case 4: return Color(red: 0.27, green: 0.62, blue: 0.83)  // blue — high
+        case 3: return Color(red: 0.95, green: 0.74, blue: 0.30)  // amber — medium
+        default: return .secondary
+        }
+    }
+
+    /// The problem statement itself — serif, scrollable when long. Preserves
+    /// the user's flow: read here, hint here, move on, all without leaving.
+    @ViewBuilder
+    private var problemBody: some View {
+        if let p = store.activeProblem, !p.body.isEmpty {
+            ScrollView {
+                Text(p.body)
+                    .font(.system(size: 13, weight: .regular, design: .serif))
+                    .foregroundStyle(.primary.opacity(0.92))
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+            }
+            .frame(maxHeight: 240)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.05)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.gray.opacity(0.10), lineWidth: 0.5)
+            )
+        } else if let p = store.activeProblem {
+            // Catalog problem without transcribed body — fall back to a
+            // small notice + PDF link. (HW2/HW3 are populated; later
+            // problem sets may not be yet.)
+            VStack(spacing: 4) {
+                Text("Problem text not yet transcribed in-app.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                if let url = problemURL(p) {
+                    Link("Open PDF", destination: url).font(.system(size: 11))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.05)))
+        }
+    }
+
+    /// The peek-hint reveal card. Shows the first line of Blitzstein's
+    /// solution — the canonical "nudge" the user clicks to unblock
+    /// themselves. Mirrors the interview cadence: take a small piece of
+    /// information, run with it.
+    @ViewBuilder
+    private var hintReveal: some View {
+        if hintRevealed, let p = store.activeProblem, !p.firstLineHint.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.yellow)
+                    Text("First line of the solution")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { hintRevealed = false }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text(p.firstLineHint)
+                    .font(.system(size: 13, design: .serif))
+                    .foregroundStyle(.primary.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.yellow.opacity(0.25), lineWidth: 0.5))
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -677,11 +830,14 @@ struct PracticeView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    store.peekHint()
+                    // Toggle the inline reveal; count the peek only on
+                    // first reveal (idempotent).
+                    if !hintRevealed { store.peekHint() }
+                    withAnimation(.easeInOut(duration: 0.2)) { hintRevealed.toggle() }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "lightbulb")
-                        Text("Peek hint")
+                        Image(systemName: hintRevealed ? "lightbulb.fill" : "lightbulb")
+                        Text(hintRevealed ? "Hide hint" : "Peek hint")
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -689,7 +845,7 @@ struct PracticeView: View {
                     .foregroundStyle(nudgeColor)
                 }
                 .buttonStyle(.plain)
-                .help("Look at ONLY the first line of the solution. Then close it.")
+                .help("Reveal Blitzstein's first-line solution nudge")
             }
 
             HStack(spacing: 8) {

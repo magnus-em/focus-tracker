@@ -294,6 +294,58 @@ final class PracticeStore: ObservableObject {
         resetActive()
     }
 
+    // MARK: - Catalog navigation
+    //
+    // When the user is in "read + flip through" mode (not actually working
+    // problems through in the app — they have an iPad for that), the
+    // prev/next arrows in the active view should change the active problem
+    // without logging anything. Each problem gets its own fresh timer.
+
+    /// Flat list of every catalog problem in display order. Cache it
+    /// once instead of recomputing on every keystroke.
+    private static let flatCatalog: [Stat110Problem] = {
+        Stat110Catalog.all.flatMap { $0.problems }
+    }()
+
+    /// Move to the next problem in the catalog (across set boundaries).
+    /// Discards any in-progress timer; nothing is logged. If we're already
+    /// at the last problem, no-op.
+    func navigateNext() {
+        guard let current = activeProblem,
+              let idx = Self.flatCatalog.firstIndex(where: { $0.id == current.id }),
+              idx + 1 < Self.flatCatalog.count
+        else { return }
+        let next = Self.flatCatalog[idx + 1]
+        resetActive()
+        start(problem: next)
+    }
+
+    /// Move to the previous problem. Same semantics as navigateNext.
+    func navigatePrevious() {
+        guard let current = activeProblem,
+              let idx = Self.flatCatalog.firstIndex(where: { $0.id == current.id }),
+              idx > 0
+        else { return }
+        let prev = Self.flatCatalog[idx - 1]
+        resetActive()
+        start(problem: prev)
+    }
+
+    /// Whether prev/next arrows should be enabled.
+    var canNavigatePrevious: Bool {
+        guard let current = activeProblem,
+              let idx = Self.flatCatalog.firstIndex(where: { $0.id == current.id })
+        else { return false }
+        return idx > 0
+    }
+
+    var canNavigateNext: Bool {
+        guard let current = activeProblem,
+              let idx = Self.flatCatalog.firstIndex(where: { $0.id == current.id })
+        else { return false }
+        return idx + 1 < Self.flatCatalog.count
+    }
+
     private func resetActive() {
         ticker?.cancel(); ticker = nil
         isActive = false
