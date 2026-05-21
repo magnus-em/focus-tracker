@@ -46,6 +46,16 @@ struct PracticeView: View {
     @State private var showMonteCarloSheet = false
     @State private var showPicker = false
 
+    // Rotating quote inside the active view. Index advances on a timer
+    // every 90s and on zone transitions, so the page never feels static
+    // but also doesn't churn distractingly while the user is reading.
+    @State private var quoteRotation: Int = 0
+    @State private var quoteRotationTimer: Timer? = nil
+    @State private var lastZone: PracticeStore.Zone = .green
+    // Polya "things to try" expansion — auto-opens at red, manually-
+    // togglable in yellow.
+    @State private var polyaExpanded: Bool = false
+
     var body: some View {
         Group {
             if store.isActive {
@@ -81,16 +91,27 @@ struct PracticeView: View {
     // MARK: - Idle
 
     private var idleView: some View {
-        ScrollView {
+        let dailyQuote = PracticeQuotes.pick(.idleScreen,
+                                             seed: Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 0)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Header — friendlier, less wall-of-text
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Practice Mode")
-                        .font(.system(size: 22, weight: .semibold))
-                    Text("Stat 110 — 20-minute productive struggle. Pick up where you left off or start something new.")
-                        .font(.system(size: 11))
+                // Header — friendlier, less wall-of-text. Daily quote
+                // keyed off the calendar day so it's stable across
+                // opens within a day but rotates each day.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Practice")
+                        .font(.system(size: 26, weight: .semibold, design: .serif))
+                    Text(dailyQuote.text)
+                        .font(.system(size: 12, design: .serif))
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !dailyQuote.author.isEmpty {
+                        Text("— \(dailyQuote.author)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
+                .padding(.bottom, 4)
 
                 // Primary action — start a fresh problem from the catalog
                 Button {
@@ -316,74 +337,266 @@ struct PracticeView: View {
     }
 
     // MARK: - Active
+    //
+    // Visual hierarchy follows flow-research:
+    //   • In green zone — the timer fades back, quote takes center.
+    //     The work is the point, not the clock.
+    //   • In yellow — timer grows, coaching line + quote pivot to
+    //     "you're in the insight zone" framing.
+    //   • In red — timer is prominent, Polya checklist auto-expands,
+    //     escape valves visually pop. Time to pivot.
 
     private var activeView: some View {
-        VStack(spacing: 16) {
-            // Header — problem identity
-            VStack(spacing: 4) {
-                if let p = store.activeProblem {
-                    Text(p.sourceLabel)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(p.title)
-                        .font(.system(size: 14, weight: .medium))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
-                    if let url = problemURL(p) {
-                        Link(destination: url) {
-                            Label("Open PDF", systemImage: "doc.text")
-                                .font(.system(size: 10))
-                        }
+        ScrollView {
+            VStack(spacing: 18) {
+                problemHeader
+
+                Divider().opacity(0.4)
+
+                clockBlock
+
+                zoneBar
+
+                // Quote card — serif, soft, the emotional center of the
+                // page in green/yellow. Recedes in red where the focus
+                // is on pivoting.
+                if store.zone != .red {
+                    quoteCard
+                }
+
+                if store.zone == .red || polyaExpanded {
+                    polyaSection
+                }
+
+                if store.shouldSuggestBreak {
+                    burnoutBanner
+                }
+
+                statusRow
+
+                actionButtons
+
+                Button("Discard session") {
+                    store.discardActive()
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 4)
+        }
+        .onAppear { startQuoteRotation() }
+        .onDisappear { stopQuoteRotation() }
+        .onChange(of: store.zone) { _, newZone in
+            // Bump the quote on zone transitions so the next line is
+            // contextually appropriate (yellow / red have their own pools).
+            quoteRotation += 1
+            if newZone == .red { polyaExpanded = true }
+            lastZone = newZone
+        }
+    }
+
+    private var problemHeader: some View {
+        VStack(spacing: 4) {
+            if let p = store.activeProblem {
+                Text(p.sourceLabel)
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+                Text(p.title)
+                    .font(.system(size: 15, weight: .medium, design: .serif))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+                if let url = problemURL(p) {
+                    Link(destination: url) {
+                        Label("Open PDF", systemImage: "doc.text")
+                            .font(.system(size: 10))
+                    }
+                    .padding(.top, 1)
+                }
+            }
+        }
+    }
+
+    /// Clock + zone label. Size and prominence scale with zone — in green
+    /// it's subtle, in red it's the main element. This is intentional:
+    /// timer-as-centerpiece creates time anxiety in flow zones.
+    private var clockBlock: some View {
+        let size: CGFloat = {
+            switch store.zone {
+            case .green:  return 36
+            case .yellow: return 48
+            case .red:    return 60
+            }
+        }()
+        let weight: Font.Weight = (store.zone == .red) ? .regular : .ultraLight
+        return VStack(spacing: 6) {
+            Text(elapsedString)
+                .font(.system(size: size, weight: weight, design: .monospaced))
+                .foregroundStyle(store.zone.color.opacity(store.zone == .green ? 0.75 : 1.0))
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.3), value: elapsedString)
+                .animation(.easeInOut(duration: 0.4), value: store.zone)
+
+            Text(store.zone.label.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .tracking(1.5)
+                .foregroundStyle(store.zone.color)
+
+            Text(coachingLine)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .frame(minHeight: 28)
+                .animation(.easeInOut(duration: 0.4), value: store.zone)
+        }
+        .padding(.vertical, store.zone == .green ? 4 : 10)
+    }
+
+    /// Coaching line — rewritten from the Zone helper to be more
+    /// permission-granting + specific. Pulled here so it can adapt
+    /// based on hint count etc. without touching the FocusCore enum.
+    private var coachingLine: String {
+        switch store.zone {
+        case .green:
+            return "Settle in. Read the problem twice. Define your variables."
+        case .yellow:
+            return "You've thought deeply for 15 minutes. Most insights show up in the next 5."
+        case .red:
+            if store.hintsPeeked == 0 && !store.monteCarloUsed {
+                return "Time to pivot. A first-line peek isn't giving up — it's the move."
+            } else if store.monteCarloUsed {
+                return "You ran the sim. What pattern does the empirical answer suggest?"
+            } else {
+                return "You took the nudge. Run with it. That's the muscle you're building."
+            }
+        }
+    }
+
+    /// The quote card. Serif, soft cream background, attribution in
+    /// secondary type. Rotates every 90s + on zone transitions so it
+    /// feels alive but never churns distractingly.
+    private var quoteCard: some View {
+        let context: PracticeQuotes.Context = {
+            switch store.zone {
+            case .green:  return .general
+            case .yellow: return .yellowZone
+            case .red:    return .redZone
+            }
+        }()
+        let q = PracticeQuotes.pick(context, seed: quoteRotation)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 6) {
+                Text("\u{201C}")
+                    .font(.system(size: 24, weight: .regular, design: .serif))
+                    .foregroundStyle(store.zone.color.opacity(0.45))
+                    .padding(.top, 2)
+                Text(q.text)
+                    .font(.system(size: 13, weight: .regular, design: .serif))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !q.author.isEmpty {
+                Text("— \(q.author)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(store.zone.color.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(store.zone.color.opacity(0.15), lineWidth: 0.5)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
+        .animation(.easeInOut(duration: 0.25), value: quoteRotation)
+    }
+
+    /// Polya checklist — Stat 110-specific "things to try" moves. Auto-
+    /// expands at red zone. Each row is a concrete probabilistic tactic
+    /// with a one-line hint about when it applies.
+    private var polyaSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "list.bullet.rectangle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text("Things to try")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("· Stat 110 toolkit")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { polyaExpanded.toggle() }
+                } label: {
+                    Image(systemName: polyaExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            if polyaExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(PolyaChecklist.stat110Moves) { move in
+                        polyaRow(move)
                     }
                 }
             }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.05)))
+    }
 
-            Divider()
-
-            // Big clock + zone
-            VStack(spacing: 6) {
-                Text(elapsedString)
-                    .font(.system(size: 56, weight: .light, design: .monospaced))
-                    .foregroundStyle(store.zone.color)
-                    .contentTransition(.numericText())
-                    .animation(.easeInOut(duration: 0.2), value: elapsedString)
-
-                Text(store.zone.label.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(1.5)
-                    .foregroundStyle(store.zone.color)
-
-                Text(store.zone.coachingLine)
-                    .font(.system(size: 11))
+    private func polyaRow(_ move: PolyaChecklist.Move) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "circle")
+                .font(.system(size: 7))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(move.title)
+                    .font(.system(size: 12, weight: .medium))
+                Text(move.hint)
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 30)
-                    .frame(height: 32)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, 6)
+            Spacer()
+        }
+    }
 
-            zoneBar
+    /// Counters + status, but rendered as a single line of subtle text
+    /// instead of three big chips that dominated the old design. The
+    /// signal is here when you want it, but doesn't compete for attention.
+    private var statusRow: some View {
+        HStack(spacing: 14) {
+            statusItem(icon: "lightbulb",
+                       label: store.hintsPeeked == 0 ? "no hints yet" :
+                              "\(store.hintsPeeked) hint\(store.hintsPeeked == 1 ? "" : "s")")
+            statusItem(icon: "function",
+                       label: store.monteCarloUsed ? "MC used" : "no sim yet")
+            statusItem(icon: store.isPaused ? "pause.circle" : "circle.fill",
+                       label: store.isPaused ? "paused" : "running",
+                       tint: store.isPaused ? .orange : .green)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.tertiary)
+        .frame(maxWidth: .infinity)
+    }
 
-            if store.shouldSuggestBreak {
-                burnoutBanner
-            }
-
-            HStack(spacing: 14) {
-                counterChip(label: "Hints peeked", value: "\(store.hintsPeeked)")
-                counterChip(label: "Monte Carlo", value: store.monteCarloUsed ? "used" : "—")
-                counterChip(label: "Status", value: store.isPaused ? "paused" : "running")
-            }
-
-            Spacer(minLength: 8)
-
-            actionButtons
-
-            Button("Discard session") {
-                store.discardActive()
-            }
-            .font(.system(size: 10))
-            .foregroundStyle(.tertiary)
-            .buttonStyle(.plain)
+    private func statusItem(icon: String, label: String, tint: Color = .secondary) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 9))
+                .foregroundStyle(tint)
+            Text(label)
         }
     }
 
@@ -518,6 +731,22 @@ struct PracticeView: View {
         }
     }
 
+    // MARK: - Quote rotation
+
+    private func startQuoteRotation() {
+        quoteRotationTimer?.invalidate()
+        let t = Timer(timeInterval: 90, repeats: true) { _ in
+            DispatchQueue.main.async { quoteRotation += 1 }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        quoteRotationTimer = t
+    }
+
+    private func stopQuoteRotation() {
+        quoteRotationTimer?.invalidate()
+        quoteRotationTimer = nil
+    }
+
     // MARK: - Helpers
 
     private var elapsedString: String {
@@ -586,16 +815,37 @@ private struct SolvedSheet: View {
     @State private var notes: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Locked in.")
-                .font(.system(size: 18, weight: .semibold))
-            Text("This gets logged to your homework list so the review queue can resurface it later.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+        // Celebration moment: big green seal at top, contextual quote
+        // beneath, then the calibration form. The point of the sheet is
+        // the moment first, the bookkeeping second.
+        let q = PracticeQuotes.pick(.afterSolved, seed: Int(store.elapsedSeconds))
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Locked in.")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("One more pattern in your library.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
 
-            // Confidence — uses the same enum the homework section uses
+            // Contextual celebration quote
+            if !q.text.isEmpty {
+                Text(q.text)
+                    .font(.system(size: 12, weight: .regular, design: .serif))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.07)))
+            }
+
             VStack(alignment: .leading, spacing: 6) {
-                Text("Confidence")
+                Text("How well did you know it?")
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 HStack(spacing: 6) {
                     ForEach(Confidence.allCases, id: \.self) { c in
@@ -616,25 +866,23 @@ private struct SolvedSheet: View {
 
             Toggle(isOn: $needsReview) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Add to review queue")
+                    Text("Resurface for review")
                         .font(.system(size: 12, weight: .medium))
-                    Text("Resurface this in Practice Mode on the schedule below.")
+                    Text("Auto-on for Shaky / Struggled. We'll bring it back at the right moment.")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
             }
             .toggleStyle(.switch)
-            // Default to needs-review iff confidence isn't .solid — but
-            // let the user override either way.
             .onChange(of: confidence) { _, new in
                 needsReview = (new != .solid)
             }
 
-            Text("Key insight (optional)")
+            Text("Key insight (one line — your future self will thank you)")
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             TextEditor(text: $notes)
-                .font(.system(size: 12))
-                .frame(height: 80)
+                .font(.system(size: 12, design: .serif))
+                .frame(height: 70)
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
 
@@ -648,18 +896,20 @@ private struct SolvedSheet: View {
                                        notes: notes)
                     isPresented = false
                 } label: {
-                    Text("Log Solve").fontWeight(.semibold)
-                        .padding(.horizontal, 14).padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.green.opacity(0.18)))
-                        .foregroundStyle(Color.green)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                        Text("Save & continue").fontWeight(.semibold)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.green.opacity(0.22)))
+                    .foregroundStyle(Color.green)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .padding(22)
+        .frame(width: 440)
         .onAppear {
-            // Default review-flag from initial confidence (.solid → off)
             needsReview = (confidence != .solid)
         }
     }
@@ -708,18 +958,36 @@ private struct StuckSheet: View {
     @State private var notes: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Moving on is a skill.")
-                .font(.system(size: 18, weight: .semibold))
-            Text("This problem will get added to your review queue so you come back to it in a day with fresh eyes.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+        // Reframing moment. The point is to make this feel like a real
+        // strategic choice, not a defeat. Quote first, options second.
+        let stuckQuote = PracticeQuotes.pick(.afterStuck, seed: Int(store.elapsedSeconds))
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "moon.zzz.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Moving on is a skill.")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("Coming back with fresh eyes is a technique, not a consolation.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
 
-            Text("What blocked you? (optional)")
+            Text(stuckQuote.text)
+                .font(.system(size: 12, weight: .regular, design: .serif))
+                .foregroundStyle(.primary.opacity(0.85))
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.07)))
+
+            Text("Where did the path stop? (one line is plenty)")
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             TextEditor(text: $notes)
-                .font(.system(size: 12))
-                .frame(height: 80)
+                .font(.system(size: 12, design: .serif))
+                .frame(height: 60)
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
 
@@ -728,14 +996,19 @@ private struct StuckSheet: View {
                     store.finishStuck(notes: notes)
                     isPresented = false
                 } label: {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text("Log as Stuck — add to review queue")
-                            .fontWeight(.medium)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise.circle.fill")
+                            Text("Stuck — bring back tomorrow")
+                                .fontWeight(.semibold)
+                        }
+                        Text("Used the toolkit. Resurfaces in your review queue with fresh eyes.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.orange.opacity(0.85))
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.14)))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.14)))
                     .foregroundStyle(Color.orange)
                 }
                 .buttonStyle(.plain)
@@ -744,14 +1017,19 @@ private struct StuckSheet: View {
                     store.finishSkipped(notes: notes)
                     isPresented = false
                 } label: {
-                    HStack {
-                        Image(systemName: "arrow.right.circle")
-                        Text("Skip — not in my toolkit yet")
-                            .fontWeight(.medium)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.right.circle")
+                            Text("Skip — needs a tool I don't have yet")
+                                .fontWeight(.medium)
+                        }
+                        Text("Topic mismatch. Logged but not put in review.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.10)))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.08)))
                 }
                 .buttonStyle(.plain)
             }
@@ -761,8 +1039,8 @@ private struct StuckSheet: View {
                 Spacer()
             }
         }
-        .padding(20)
-        .frame(width: 380)
+        .padding(22)
+        .frame(width: 440)
     }
 }
 
