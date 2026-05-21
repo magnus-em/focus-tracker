@@ -7,6 +7,24 @@ import Foundation
 /// (grouped by topic, never graded — for warm-up) and "Homework" (the
 /// actual numbered turn-in problems). We surface both as pickable items
 /// because the user wants to log either kind as a homework problem.
+/// One progressive hint step for a Stat 110 problem. Multiple steps form
+/// the user's reveal path: peek once for step 1, peek again for step 2,
+/// continue all the way to the full solution. Each step's `body` supports
+/// `$inline$` and `$$display$$` LaTeX math (rendered via KaTeX in MathView).
+public struct SolutionStep: Hashable, Sendable {
+    /// Short label shown above the step body (e.g. "Set up", "Apply Bayes",
+    /// "Solve the recurrence", or "Full solution"). Empty string OK.
+    public let title: String
+    /// Step text. Use `$...$` for inline math and `$$...$$` for displayed.
+    /// Standard LaTeX commands work — `\frac`, `\binom`, `\sum`, etc.
+    public let body: String
+
+    public init(title: String, body: String) {
+        self.title = title
+        self.body = body
+    }
+}
+
 public struct Stat110Problem: Identifiable, Hashable, Sendable {
     /// Stable string identifier so we can mark this problem "done" in the
     /// homework store regardless of how the user edits the title.
@@ -28,10 +46,18 @@ public struct Stat110Problem: Identifiable, Hashable, Sendable {
     /// "1 p" → "1-p", etc.). Empty string if not yet transcribed.
     public let body: String
 
-    /// The FIRST LINE of Blitzstein's solution — exactly what an
-    /// interviewer would give you as a nudge. The user reveals this
-    /// via the "Peek hint" button when stuck.
+    /// The FIRST LINE of Blitzstein's solution — kept for backwards
+    /// compat. When `solutionSteps` is non-empty, the UI uses those
+    /// instead. When empty, this is shown as the only hint.
     public let firstLineHint: String
+
+    /// Progressive solution steps — peek once for step 1, peek again
+    /// for step 2, all the way to the full solution. Supports inline
+    /// `$...$` and display `$$...$$` LaTeX math via KaTeX.
+    ///
+    /// Empty array means "no progressive solution available" — fall
+    /// back to `firstLineHint` for a single reveal.
+    public let solutionSteps: [SolutionStep]
 
     /// Subjective 1-5 rating of how useful this problem is for quant
     /// interview prep (Jane Street / Citadel / Two Sigma style). 5 = a
@@ -71,6 +97,7 @@ public struct Stat110Problem: Identifiable, Hashable, Sendable {
                 title: String,
                 body: String = "",
                 firstLineHint: String = "",
+                solutionSteps: [SolutionStep] = [],
                 quantRelevance: Int = 3,
                 quantRationale: String = "") {
         self.id = id
@@ -81,6 +108,7 @@ public struct Stat110Problem: Identifiable, Hashable, Sendable {
         self.title = title
         self.body = body
         self.firstLineHint = firstLineHint
+        self.solutionSteps = solutionSteps
         self.quantRelevance = quantRelevance
         self.quantRationale = quantRationale
     }
@@ -314,7 +342,19 @@ private let hw3: Stat110ProblemSet = .init(
             topic: "Simpson's Paradox", number: "2.1",
             title: "Simpson's Paradox — two-event vs three-event",
             body: "(a) Is it possible to have events A, B, E such that P(A|E) < P(B|E) and P(A|Eᶜ) < P(B|Eᶜ), yet P(A) > P(B)? That is, A is less likely than B given that E is true, and also given that E is false, yet A is more likely than B if given no information about E. Show this is impossible (with a short proof) or find a counterexample (with a \"story\").\n\n(b) Is it possible to have events A, B, E such that P(A|B,E) < P(A|Bᶜ,E) and P(A|B,Eᶜ) < P(A|Bᶜ,Eᶜ), yet P(A|B) > P(A|Bᶜ)? That is, given E is true, learning B is evidence against A, and similarly given Eᶜ; but given no information about E, learning B is evidence in favor of A. Show this is impossible or find a counterexample with a story.",
-            firstLineHint: "(a) Not possible. By LOTP: P(A) = P(A|E)P(E) + P(A|Eᶜ)P(Eᶜ) < P(B|E)P(E) + P(B|Eᶜ)P(Eᶜ) = P(B). (b) YES — this IS the structure of Simpson's Paradox. Two doctors: Dr. Hibbert is better at both heart transplants and bandaid removals, but does mostly hearts (90% hearts, 10% bandaids) while Dr. Nick does mostly bandaids (10% hearts, 90% bandaids). Aggregate: Nick's success rate (83%) beats Hibbert's (80%).",
+            firstLineHint: "(a) Not possible — straight LOTP. (b) Yes — this is the structure of Simpson's Paradox.",
+            solutionSteps: [
+                .init(title: "(a) Set up LOTP",
+                      body: "For part (a) we want $P(A) > P(B)$ given that $A$ is less likely than $B$ both inside and outside $E$. Try writing both $P(A)$ and $P(B)$ as a weighted average via the law of total probability — same weights $P(E)$ and $P(E^c)$ in each."),
+                .init(title: "(a) Finish the argument",
+                      body: "$$P(A) = P(A \\mid E)P(E) + P(A \\mid E^c)P(E^c)$$\n$$< P(B \\mid E)P(E) + P(B \\mid E^c)P(E^c) = P(B).$$\nThe weighted average of two smaller numbers is smaller. So with just **two** events, this paradox **cannot** happen."),
+                .init(title: "(b) Why three events differ",
+                      body: "Now we have three events $A, B, E$, and we condition on $E$ vs $E^c$. The point: conditioning on $E$ partitions the world differently than conditioning on $B$. The LOTP argument from (a) no longer applies because the weights $P(E \\mid B)$ and $P(E \\mid B^c)$ are different. So the paradox **can** happen — and this is exactly Simpson's Paradox."),
+                .init(title: "(b) Doctor story",
+                      body: "Two doctors, Dr. Hibbert and Dr. Nick. Each performs heart transplants ($E$) and bandaid removals ($E^c$). Let $A$ = surgery succeeds, $B$ = Dr. Nick did the surgery (so $B^c$ = Dr. Hibbert).\n\nDr. Hibbert is the better surgeon at both:\n$$P(A \\mid B, E) < P(A \\mid B^c, E),$$\n$$P(A \\mid B, E^c) < P(A \\mid B^c, E^c).$$\nBut Hibbert does mostly hearts (hard), while Nick does mostly bandaids (easy)."),
+                .init(title: "Full solution — specific numbers",
+                      body: "Hibbert: 90 heart transplants (70 successful), 10 bandaid removals (10 successful). Nick: 10 hearts (2 successful), 90 bandaids (81 successful).\n\nWithin each surgery type, Hibbert wins. But aggregate success rates:\n$$P(A \\mid B^c) = 80 / 100 = 80\\% \\text{ (Hibbert)},$$\n$$P(A \\mid B) = 83 / 100 = 83\\% \\text{ (Nick)}.$$\nSo $P(A \\mid B) > P(A \\mid B^c)$ — the worse doctor *appears* better on aggregate.\n\n**This is why you must control for confounders.** Real-world example: a player can have higher batting average than another every season individually, yet a lower batting average when seasons are aggregated."),
+            ],
             quantRelevance: 5,
             quantRationale: "Simpson's Paradox is a real risk-management trap. Understanding the structure is mandatory for anyone touching data at a hedge fund."),
         .init(
@@ -322,7 +362,19 @@ private let hw3: Stat110ProblemSet = .init(
             topic: "Simpson's Paradox", number: "2.2",
             title: "Lisa, Homer, and Stampy",
             body: "Consider the following conversation from an episode of The Simpsons:\n\n   Lisa: Dad, I think he's an ivory dealer! His boots are ivory, his hat is ivory, and I'm pretty sure that check is ivory.\n   Homer: Lisa, a guy who's got lots of ivory is less likely to hurt Stampy than a guy whose ivory supplies are low.\n\nHomer and Lisa are debating whether the man (named Blackheart) is likely to hurt Stampy the Elephant if they sell Stampy to him.\n\n(a) Define clear notation for the events of interest.\n(b) Express Lisa's and Homer's arguments as conditional probability statements.\n(c) Assume it is true that someone who has a lot of a commodity will have less desire to acquire more of the commodity. Explain what is wrong with Homer's reasoning that the evidence about Blackheart makes it less likely he will harm Stampy.",
-            firstLineHint: "Let H = man will hurt Stampy, L = man has lots of ivory, D = man is an ivory dealer. Lisa: observing L makes D more likely (P(D|L) > P(D)), and a dealer is more dangerous, so P(H|L) > P(H|Lᶜ). Homer: P(H|L) < P(H|Lᶜ).",
+            firstLineHint: "Three events run the conversation: $H$ = will hurt Stampy, $L$ = lots of ivory, $D$ = ivory dealer.",
+            solutionSteps: [
+                .init(title: "(a) Define the events",
+                      body: "Three events keep the argument honest:\n\n• $H$ = the man will hurt Stampy.\n• $L$ = the man has lots of ivory.\n• $D$ = the man is an ivory dealer.\n\nLisa's argument involves all three; Homer's argument only uses $H$ and $L$. That's the asymmetry."),
+                .init(title: "(b) Lisa's argument",
+                      body: "Lisa observes $L$ is true. She suggests (reasonably) that lots of ivory makes the dealer hypothesis more likely:\n$$P(D \\mid L) > P(D).$$\nImplicitly, she assumes a dealer is more dangerous, so lots of ivory raises the probability of harm:\n$$P(H \\mid L) > P(H \\mid L^c).$$"),
+                .init(title: "(b) Homer's argument",
+                      body: "Homer asserts the opposite — having more ivory means less *need* to acquire ivory, less reason to harm Stampy for the ivory:\n$$P(H \\mid L) < P(H \\mid L^c).$$\nNote: he never conditions on $D$. That's the move that's about to backfire."),
+                .init(title: "(c) Where Homer goes wrong",
+                      body: "Homer's local intuition is **not wrong** — it can hold within the dealer group and within the non-dealer group separately:\n$$P(H \\mid L, D) < P(H \\mid L^c, D),$$\n$$P(H \\mid L, D^c) < P(H \\mid L^c, D^c).$$\nBut these two within-group inequalities do **not** imply $P(H \\mid L) < P(H \\mid L^c)$. The marginal can flip the within-group direction — that's Simpson's Paradox."),
+                .init(title: "Full solution — why this is Simpson's",
+                      body: "Observing $L$ (lots of ivory) shifts $P(D)$ way up — Blackheart is now very likely a dealer. And dealers have much higher baseline $P(H)$.\n\nSo when we marginalize over $D$:\n$$P(H \\mid L) = P(H \\mid L, D) P(D \\mid L) + P(H \\mid L, D^c) P(D^c \\mid L),$$\nthe huge mass shift from $D^c$ to $D$ dominates the within-group decrease in $P(H \\mid L, \\cdot)$.\n\nHomer condition-flipped on the wrong variable. The dangerous evidence is not 'has ivory' per se — it's the **information about dealer status** that the ivory leaks. **Always check the confounders.**"),
+            ],
             quantRelevance: 3,
             quantRationale: "Narrative-heavy but the conditioning-on-the-wrong-thing fallacy is real. Less directly interview-asked than 2.1."),
 
@@ -331,7 +383,19 @@ private let hw3: Stat110ProblemSet = .init(
             topic: "Gambler's Ruin", number: "3.1",
             title: "Gambler quits when ahead by $2",
             body: "A gambler repeatedly plays a game where in each round, he wins a dollar with probability 1/3 and loses a dollar with probability 2/3. His strategy is \"quit when he is ahead by $2,\" though some suspect he is a gambling addict anyway. Suppose that he starts with a million dollars. Show that the probability that he'll ever be ahead by $2 is less than 1/4.",
-            firstLineHint: "Special case of gambler's ruin. Let aᵢ = P(profit of $2 before being ruined, starting with $i). First-step analysis: aᵢ = aᵢ₊₁/3 + 2aᵢ₋₁/3, with a₀ = 0 and aᵢ₊₂ = 1. Solve: aᵢ = (2ⁱ − 1) / (2ⁱ⁺² − 1), which is always < 1/4.",
+            firstLineHint: "Special case of gambler's ruin. Let $a_i$ = probability of reaching the target before being ruined, starting with $\\$i$.",
+            solutionSteps: [
+                .init(title: "Recognize the structure",
+                      body: "This is a **gambler's ruin** problem. The gambler quits when he's $\\$2$ ahead — call that the *target*. He's 'ruined' if he reaches $\\$0$. Starting fortune is huge ($\\$10^6$), but the structure of the answer doesn't care about the starting fortune directly — it only depends on the distance to ruin vs. target.\n\nLet $a_i$ = probability of hitting the target ($\\$2$ profit) before being ruined, starting from fortune $\\$i$."),
+                .init(title: "First-step analysis",
+                      body: "Condition on the result of the next play. With probability $1/3$ we win and move to fortune $\\$(i+1)$; with probability $2/3$ we lose and move to $\\$(i-1)$:\n$$a_i = \\tfrac{1}{3} a_{i+1} + \\tfrac{2}{3} a_{i-1}.$$\nBoundary conditions: $a_0 = 0$ (ruined, target unreachable) and $a_{i_0 + 2} = 1$ (already at target). For starting fortune $\\$10^6$, target is at $\\$(10^6 + 2)$."),
+                .init(title: "Solve the recurrence",
+                      body: "The recurrence $\\tfrac{1}{3} a_{i+1} - a_i + \\tfrac{2}{3} a_{i-1} = 0$ has characteristic equation\n$$\\tfrac{1}{3} r^2 - r + \\tfrac{2}{3} = 0,$$\nwith roots $r = 1$ and $r = 2$. So\n$$a_i = A + B \\cdot 2^i$$\nfor constants determined by the boundary conditions $a_0 = 0$ and $a_{N+2} = 1$ (where $N$ is the starting fortune)."),
+                .init(title: "Plug in boundaries",
+                      body: "From $a_0 = 0$: $A + B = 0$, so $A = -B$.\nFrom $a_{N+2} = 1$: $A + B \\cdot 2^{N+2} = 1$, so $B(2^{N+2} - 1) = 1$, giving $B = 1/(2^{N+2} - 1)$.\n\nSo the probability of reaching the target starting from $\\$i$ is\n$$a_i = \\frac{2^i - 1}{2^{N+2} - 1}.$$\nIn particular, starting from $\\$N$ (one million):\n$$a_N = \\frac{2^N - 1}{2^{N+2} - 1}.$$"),
+                .init(title: "Full solution — prove $a_N < 1/4$",
+                      body: "We need to show $a_N = \\dfrac{2^N - 1}{2^{N+2} - 1} < \\dfrac{1}{4}$ for all $N \\geq 1$.\n\nCross-multiply (both denominators positive):\n$$4(2^N - 1) < 2^{N+2} - 1$$\n$$\\iff 2^{N+2} - 4 < 2^{N+2} - 1,$$\nwhich is always true. So $a_N < 1/4$ no matter how large the starting fortune. $\\blacksquare$\n\n**Why this matters for trading:** the gambler has positive marginal probability of hitting a fixed target on any one trajectory, but the geometric decay overwhelms the gain. Negative-edge strategies don't fix themselves with bigger bankrolls."),
+            ],
             quantRelevance: 5,
             quantRationale: "Gambler's ruin is a top-3 interview topic at trading firms. First-step analysis + recurrence is the canonical move."),
 
@@ -340,7 +404,17 @@ private let hw3: Stat110ProblemSet = .init(
             topic: "Bernoulli and Binomial", number: "4.1",
             title: "World Series",
             body: "(a) In the World Series of baseball, two teams (call them A and B) play a sequence of games against each other, and the first team to win four games wins the series. Let p be the probability that A wins an individual game, and assume the games are independent. What is the probability that team A wins the series?\n\n(b) Give a clear intuitive explanation of whether the answer to (a) depends on whether the teams always play 7 games (and whoever wins the majority wins the series), or the teams stop playing as soon as one team has won 4 games (as is actually the case in practice).",
-            firstLineHint: "Cleanest approach: imagine they play all 7 games anyway (the result is unchanged). Then let X ∼ Bin(7, p) be A's wins, and P(A wins series) = P(X ≥ 4) = Σ_{k=4..7} C(7,k) pᵏ (1−p)⁷⁻ᵏ.",
+            firstLineHint: "Try the **'play out all 7'** trick — even after the series is decided, imagine they keep playing. The series winner is unaffected.",
+            solutionSteps: [
+                .init(title: "(a) Direct approach (clunky but instructive)",
+                      body: "A wins the series in exactly 4, 5, 6, or 7 games. Let $q = 1 - p$. For A to win in exactly 5 games: she must win 3 of the first 4 (in any order) **and** win the 5th. The first-4 part is $\\binom{4}{3} p^3 q$, then $\\cdot p$:\n$$P(A \\text{ wins in 5}) = \\binom{4}{3} p^4 q.$$\nSimilarly for 6 and 7. Adding:\n$$P(A \\text{ wins}) = p^4 + \\binom{4}{3} p^4 q + \\binom{5}{3} p^4 q^2 + \\binom{6}{3} p^4 q^3.$$"),
+                .init(title: "(a) Cleaner approach — 'play all 7'",
+                      body: "Imagine that even after a team wins 4 games, the teams keep playing the remaining games anyway (just for fun). The series winner is **unchanged** — the post-decision games don't matter.\n\nNow let $X$ = number of games A wins out of all 7. Since each game is independent Bernoulli($p$):\n$$X \\sim \\text{Bin}(7, p).$$\nA wins the series $\\iff$ A wins at least 4 of the 7 games:\n$$P(A \\text{ wins}) = P(X \\geq 4) = \\sum_{k=4}^{7} \\binom{7}{k} p^k (1-p)^{7-k}.$$"),
+                .init(title: "(b) The two formulations agree",
+                      body: "Both expressions are equal as functions of $p$ (you can verify by expanding both as polynomials in $p$ and seeing they match coefficient-by-coefficient).\n\nThe **intuition**: stopping early vs continuing doesn't change who wins. If A has already won 4, A is the series winner regardless of the remaining (irrelevant) games. So $P(A \\text{ wins series})$ doesn't depend on the stopping rule."),
+                .init(title: "Full solution — why this trick matters",
+                      body: "The 'play out all 7' trick is a general pattern: when a stochastic process has a stopping rule that doesn't affect the outcome you care about, you can replace it with a fixed-length process and get cleaner formulas.\n\nMore broadly, this is **'imagine the process completed even though it didn't'** — useful for negative binomials, runs problems, and many trading-style 'first to N' settings. Memorize it as a tool."),
+            ],
             quantRelevance: 4,
             quantRationale: "Best-of-N series problems are interview canon. The \"play out all 7\" trick is the move and it generalizes."),
         .init(
@@ -348,7 +422,17 @@ private let hw3: Stat110ProblemSet = .init(
             topic: "Bernoulli and Binomial", number: "4.2",
             title: "Sequences given number of successes",
             body: "A sequence of n independent experiments is performed. Each experiment is a success with probability p and a failure with probability q = 1 − p. Show that conditional on the number of successes, all possibilities for the list of outcomes of the experiment are equally likely (of course, we only consider lists of outcomes where the number of successes is consistent with the information being conditioned on).",
-            firstLineHint: "Let Xⱼ = 1 if jth trial is success, X = ΣXⱼ. For any (a₁,…,aₙ) with sum k: P(X₁ = a₁, …, Xₙ = aₙ | X = k) = pᵏ qⁿ⁻ᵏ / (C(n,k) pᵏ qⁿ⁻ᵏ) = 1/C(n,k) — independent of p and of the specific sequence.",
+            firstLineHint: "Set up indicators and write out the conditional probability with the definition.",
+            solutionSteps: [
+                .init(title: "Set up indicators",
+                      body: "Let $X_j = 1$ if the $j$th trial is a success, $0$ otherwise. Let $X = X_1 + \\cdots + X_n$ be the total number of successes. Let $q = 1 - p$ for brevity. We want to compute, for any specific binary sequence $(a_1, \\ldots, a_n)$ with $a_1 + \\cdots + a_n = k$:\n$$P(X_1 = a_1, \\ldots, X_n = a_n \\mid X = k).$$"),
+                .init(title: "Apply the definition",
+                      body: "By the definition of conditional probability:\n$$P(X_1 = a_1, \\ldots, X_n = a_n \\mid X = k) = \\frac{P(X_1 = a_1, \\ldots, X_n = a_n)}{P(X = k)}.$$\n(We used the fact that the event $\\{X_1 = a_1, \\ldots, X_n = a_n\\}$ already implies $X = k$ since $\\sum a_j = k$.)"),
+                .init(title: "Plug in the numerator and denominator",
+                      body: "Numerator: by independence, $P(X_1 = a_1, \\ldots, X_n = a_n) = p^k q^{n-k}$ (since exactly $k$ of the $a_j$ are 1, and they appear in specified positions).\n\nDenominator: $X \\sim \\text{Bin}(n, p)$, so $P(X = k) = \\binom{n}{k} p^k q^{n-k}$.\n\nTherefore:\n$$P(X_1 = a_1, \\ldots, X_n = a_n \\mid X = k) = \\frac{p^k q^{n-k}}{\\binom{n}{k} p^k q^{n-k}} = \\frac{1}{\\binom{n}{k}}.$$"),
+                .init(title: "Full solution — interpret the cancellation",
+                      body: "Two remarkable facts:\n\n**1.** The answer doesn't depend on $(a_1, \\ldots, a_n)$. So conditional on the total being $k$, every one of the $\\binom{n}{k}$ specific sequences with $k$ successes is equally likely.\n\n**2.** The answer doesn't depend on $p$ either. This is the **sufficient statistic** phenomenon: once you know the total count $X = k$, the specific arrangement carries no information about $p$. Knowing the order would not help you estimate $p$ at all.\n\nThis is the gateway to formal estimation theory (Stat 111), and the underlying reason that the Hypergeometric distribution in 4.3(c) is $p$-free."),
+            ],
             quantRelevance: 4,
             quantRationale: "Sufficient statistics in disguise. The fact that p drops out is the foundation of estimation theory — and the symmetry argument is interview-grade."),
         .init(
@@ -356,7 +440,19 @@ private let hw3: Stat110ProblemSet = .init(
             topic: "Bernoulli and Binomial", number: "4.3",
             title: "Sums and differences of Binomials",
             body: "Let X ∼ Bin(n, p) and Y ∼ Bin(m, p), independent of X.\n\n(a) Show that X + Y ∼ Bin(n + m, p), using a story proof.\n(b) Show that X − Y is not Binomial.\n(c) Find P(X = k | X + Y = j). How does this relate to the elk problem from HW 1?",
-            firstLineHint: "(a) Story: X counts successes in n trials, Y counts in m more trials; X + Y is total successes in n + m trials, so X + Y ∼ Bin(n + m, p). (c) P(X = k | X + Y = j) = C(n,k) C(m,j−k) / C(n+m,j) — Hypergeometric. p disappears!",
+            firstLineHint: "(a) Tell a story — don't compute. (b) Range. (c) Definition of conditional probability + cancel $p$.",
+            solutionSteps: [
+                .init(title: "(a) Story proof for X + Y",
+                      body: "Interpret $X$ as the number of successes in $n$ independent Bernoulli($p$) trials, and $Y$ as the number of successes in $m$ **more** independent Bernoulli($p$) trials, where the $n$ and the $m$ trials are independent.\n\nThen $X + Y$ counts the number of successes in the combined $n + m$ independent trials, each with success probability $p$. By definition of Binomial:\n$$X + Y \\sim \\text{Bin}(n + m, p).$$\nNo PMF calculation needed."),
+                .init(title: "(b) Why X − Y is not Binomial",
+                      body: "A Binomial random variable is non-negative — it counts successes. But $X - Y$ can be **negative** with positive probability (whenever $Y > X$, which has positive probability when $m \\geq 1$).\n\nSo $X - Y$ cannot be Binomial. Done."),
+                .init(title: "(c) Set up the conditional probability",
+                      body: "By definition:\n$$P(X = k \\mid X + Y = j) = \\frac{P(X = k, X + Y = j)}{P(X + Y = j)}.$$\nThe event $\\{X = k, X + Y = j\\}$ is the same as $\\{X = k, Y = j - k\\}$. By independence of $X$ and $Y$:\n$$P(X = k, Y = j - k) = P(X = k) \\, P(Y = j - k).$$"),
+                .init(title: "(c) Plug in the PMFs and watch $p$ cancel",
+                      body: "Using $X \\sim \\text{Bin}(n, p)$, $Y \\sim \\text{Bin}(m, p)$, $X + Y \\sim \\text{Bin}(n+m, p)$:\n$$\\frac{\\binom{n}{k} p^k (1-p)^{n-k} \\cdot \\binom{m}{j-k} p^{j-k} (1-p)^{m-(j-k)}}{\\binom{n+m}{j} p^j (1-p)^{n+m-j}}.$$\nThe $p$ and $(1-p)$ factors cancel exactly. Result:\n$$P(X = k \\mid X + Y = j) = \\frac{\\binom{n}{k}\\binom{m}{j-k}}{\\binom{n+m}{j}}.$$\nThis is the **Hypergeometric** PMF."),
+                .init(title: "Full solution — connection to the elk problem",
+                      body: "Why does $p$ cancel? Imagine $n$ male elk and $m$ female elk. Tag each elk independently with probability $p$. Now ask: given that $j$ total elk are tagged, how many of the $n$ males are tagged?\n\nAnswer: equivalent to sampling $j$ elk **without replacement** from the population of $n + m$, and counting males. That's $\\text{HGeom}(n+m, n, j)$ — no $p$ involved, because once we condition on the total tagged count, the **identities** of which $j$ were tagged are a uniform random subset (by 4.2).\n\nThis is one of the most elegant moments in elementary probability: conditioning on a sufficient statistic makes the parameter disappear."),
+            ],
             quantRelevance: 4,
             quantRationale: "Story proofs and the surprising p-cancellation are both classic interview reveals. Hypergeometric structure is broadly useful."),
 

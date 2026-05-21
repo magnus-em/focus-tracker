@@ -46,18 +46,20 @@ struct PracticeView: View {
     @State private var showMonteCarloSheet = false
     @State private var showPicker = false
 
-    // Rotating quote inside the active view. Index advances on a timer
-    // every 90s and on zone transitions, so the page never feels static
-    // but also doesn't churn distractingly while the user is reading.
-    @State private var quoteRotation: Int = 0
-    @State private var quoteRotationTimer: Timer? = nil
+    // Quote stays stable for the duration of a problem — only changes
+    // when the user navigates to a new problem. Avoids the "churn" the
+    // user pushed back on. Seed is the catalog id, so it's deterministic
+    // per problem.
     @State private var lastZone: PracticeStore.Zone = .green
     // Polya "things to try" expansion — auto-opens at red, manually-
     // togglable in yellow.
     @State private var polyaExpanded: Bool = false
-    // First-line hint reveal — toggled by the Peek-hint button. Resets
-    // when the active problem changes (handled in onChange below).
-    @State private var hintRevealed: Bool = false
+    // How many progressive solution steps have been revealed. 0 = nothing
+    // shown, 1 = first step visible, etc. Resets to 0 on problem change.
+    @State private var hintsRevealed: Int = 0
+    // User-controlled font scale for the practice mode UI. Persisted so
+    // the choice survives across launches. Range: 0.8 to 1.6.
+    @AppStorage("practice.fontScale") private var fontScale: Double = 1.0
 
     var body: some View {
         Group {
@@ -392,19 +394,15 @@ struct PracticeView: View {
             }
             .padding(.vertical, 4)
         }
-        .onAppear { startQuoteRotation() }
-        .onDisappear { stopQuoteRotation() }
         .onChange(of: store.zone) { _, newZone in
-            // Bump the quote on zone transitions so the next line is
-            // contextually appropriate (yellow / red have their own pools).
-            quoteRotation += 1
             if newZone == .red { polyaExpanded = true }
             lastZone = newZone
         }
         .onChange(of: store.activeProblem?.id) { _, _ in
-            // Reset hint reveal when navigating between problems — each
-            // problem's hint is shown only on explicit peek.
-            hintRevealed = false
+            // Reset hint reveal + Polya expansion when navigating between
+            // problems. Quote also implicitly resets (it's keyed off the
+            // problem ID via `seed` in quoteCard).
+            hintsRevealed = 0
             polyaExpanded = false
         }
     }
@@ -412,11 +410,11 @@ struct PracticeView: View {
     private var problemHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let p = store.activeProblem {
-                // Top nav row: prev | source-label | PDF | next
+                // Top nav row: prev | source-label | font controls | PDF | next
                 HStack(spacing: 6) {
                     Button {
                         store.navigatePrevious()
-                        hintRevealed = false
+                        hintsRevealed = 0
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 11, weight: .semibold))
@@ -433,6 +431,9 @@ struct PracticeView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer()
+
+                    fontScaleControls
+
                     if let url = problemURL(p) {
                         Link(destination: url) {
                             Label("PDF", systemImage: "doc.text")
@@ -441,7 +442,7 @@ struct PracticeView: View {
                     }
                     Button {
                         store.navigateNext()
-                        hintRevealed = false
+                        hintsRevealed = 0
                     } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -454,7 +455,7 @@ struct PracticeView: View {
                 }
 
                 Text(p.title)
-                    .font(.system(size: 17, weight: .semibold, design: .serif))
+                    .font(.system(size: 17 * fontScale, weight: .semibold, design: .serif))
                     .multilineTextAlignment(.leading)
 
                 if p.quantRelevance > 0 {
@@ -462,6 +463,35 @@ struct PracticeView: View {
                 }
             }
         }
+    }
+
+    /// A−  /  A+  buttons in the header. Adjusts the practice-mode font
+    /// scale, persisted via @AppStorage. Clamps to a sensible range.
+    private var fontScaleControls: some View {
+        HStack(spacing: 2) {
+            Button {
+                fontScale = max(0.8, fontScale - 0.1)
+            } label: {
+                Text("A−")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("-", modifiers: .command)
+            .help("Smaller text (⌘−)")
+
+            Button {
+                fontScale = min(1.6, fontScale + 0.1)
+            } label: {
+                Text("A+")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("=", modifiers: .command)
+            .help("Larger text (⌘=)")
+        }
+        .foregroundStyle(.secondary)
     }
 
     /// Stars row + rationale — shows the user how interview-relevant
@@ -502,13 +532,13 @@ struct PracticeView: View {
         if let p = store.activeProblem, !p.body.isEmpty {
             ScrollView {
                 Text(p.body)
-                    .font(.system(size: 13, weight: .regular, design: .serif))
+                    .font(.system(size: 13 * fontScale, weight: .regular, design: .serif))
                     .foregroundStyle(.primary.opacity(0.92))
-                    .lineSpacing(3)
+                    .lineSpacing(3 * fontScale)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
             }
-            .frame(maxHeight: 240)
+            .frame(maxHeight: 280 * fontScale)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.05)))
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -532,43 +562,67 @@ struct PracticeView: View {
         }
     }
 
-    /// The peek-hint reveal card. Shows the first line of Blitzstein's
-    /// solution — the canonical "nudge" the user clicks to unblock
-    /// themselves. Mirrors the interview cadence: take a small piece of
-    /// information, run with it.
+    /// The progressive hint reveal card. Each step adds one more piece
+    /// of the solution. Math renders via KaTeX in a WKWebView. Steps go
+    /// from "set up the notation" all the way to the full solution.
     @ViewBuilder
     private var hintReveal: some View {
-        if hintRevealed, let p = store.activeProblem, !p.firstLineHint.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.yellow)
-                    Text("First line of the solution")
-                        .font(.system(size: 10, weight: .bold))
-                        .tracking(0.8)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { hintRevealed = false }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.tertiary)
+        if hintsRevealed > 0, let p = store.activeProblem {
+            VStack(alignment: .leading, spacing: 10) {
+                hintHeader(for: p)
+                if !p.solutionSteps.isEmpty {
+                    // Show the first `hintsRevealed` steps, rendered with math.
+                    ForEach(0..<min(hintsRevealed, p.solutionSteps.count), id: \.self) { i in
+                        revealedStep(p.solutionSteps[i], index: i)
                     }
-                    .buttonStyle(.plain)
+                } else if !p.firstLineHint.isEmpty {
+                    // Fallback: problem only has the single first-line nudge.
+                    AutoSizingMathView(content: p.firstLineHint, fontSize: 14 * fontScale)
                 }
-                Text(p.firstLineHint)
-                    .font(.system(size: 13, design: .serif))
-                    .foregroundStyle(.primary.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(12)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.08)))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.yellow.opacity(0.25), lineWidth: 0.5))
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.yellow.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.yellow.opacity(0.25), lineWidth: 0.5))
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
+    }
+
+    private func hintHeader(for p: Stat110Problem) -> some View {
+        let total = max(p.solutionSteps.count, p.firstLineHint.isEmpty ? 0 : 1)
+        let isFullSolution = total > 0 && hintsRevealed >= total
+        return HStack(spacing: 6) {
+            Image(systemName: "lightbulb.fill")
+                .font(.system(size: 11 * fontScale))
+                .foregroundStyle(.yellow)
+            Text(isFullSolution ? "Full solution" : "Hint \(hintsRevealed) of \(total)")
+                .font(.system(size: 10 * fontScale, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { hintsRevealed = 0 }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9 * fontScale, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Hide all hints")
+        }
+    }
+
+    private func revealedStep(_ step: SolutionStep, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !step.title.isEmpty {
+                Text(step.title.uppercased())
+                    .font(.system(size: 9 * fontScale, weight: .bold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary.opacity(0.8))
+            }
+            AutoSizingMathView(content: step.body, fontSize: 14 * fontScale)
+        }
+        .padding(.top, index == 0 ? 0 : 4)
     }
 
     /// Clock + zone label. Size and prominence scale with zone — in green
@@ -627,9 +681,9 @@ struct PracticeView: View {
         }
     }
 
-    /// The quote card. Serif, soft cream background, attribution in
-    /// secondary type. Rotates every 90s + on zone transitions so it
-    /// feels alive but never churns distractingly.
+    /// The quote card. Serif, soft cream background. Stable per problem —
+    /// the seed is derived from the problem ID so the same problem
+    /// always shows the same quote, no churn during a session.
     private var quoteCard: some View {
         let context: PracticeQuotes.Context = {
             switch store.zone {
@@ -638,7 +692,8 @@ struct PracticeView: View {
             case .red:    return .redZone
             }
         }()
-        let q = PracticeQuotes.pick(context, seed: quoteRotation)
+        let seed = (store.activeProblem?.id.hashValue ?? 0) ^ store.zone.hashValue
+        let q = PracticeQuotes.pick(context, seed: seed)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
                 Text("\u{201C}")
@@ -668,7 +723,6 @@ struct PracticeView: View {
                 .stroke(store.zone.color.opacity(0.15), lineWidth: 0.5)
         )
         .transition(.opacity.combined(with: .move(edge: .top)))
-        .animation(.easeInOut(duration: 0.25), value: quoteRotation)
     }
 
     /// Polya checklist — Stat 110-specific "things to try" moves. Auto-
@@ -830,14 +884,11 @@ struct PracticeView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    // Toggle the inline reveal; count the peek only on
-                    // first reveal (idempotent).
-                    if !hintRevealed { store.peekHint() }
-                    withAnimation(.easeInOut(duration: 0.2)) { hintRevealed.toggle() }
+                    advanceHint()
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: hintRevealed ? "lightbulb.fill" : "lightbulb")
-                        Text(hintRevealed ? "Hide hint" : "Peek hint")
+                        Image(systemName: peekButtonIcon)
+                        Text(peekButtonLabel)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -845,7 +896,8 @@ struct PracticeView: View {
                     .foregroundStyle(nudgeColor)
                 }
                 .buttonStyle(.plain)
-                .help("Reveal Blitzstein's first-line solution nudge")
+                .help(peekButtonHelp)
+                .disabled(peekButtonDisabled)
             }
 
             HStack(spacing: 8) {
@@ -887,20 +939,41 @@ struct PracticeView: View {
         }
     }
 
-    // MARK: - Quote rotation
+    // MARK: - Hint progression
 
-    private func startQuoteRotation() {
-        quoteRotationTimer?.invalidate()
-        let t = Timer(timeInterval: 90, repeats: true) { _ in
-            DispatchQueue.main.async { quoteRotation += 1 }
-        }
-        RunLoop.main.add(t, forMode: .common)
-        quoteRotationTimer = t
+    private var totalSteps: Int {
+        guard let p = store.activeProblem else { return 0 }
+        if !p.solutionSteps.isEmpty { return p.solutionSteps.count }
+        return p.firstLineHint.isEmpty ? 0 : 1
     }
 
-    private func stopQuoteRotation() {
-        quoteRotationTimer?.invalidate()
-        quoteRotationTimer = nil
+    private var peekButtonDisabled: Bool {
+        guard let _ = store.activeProblem else { return true }
+        return totalSteps == 0 || hintsRevealed >= totalSteps
+    }
+
+    private var peekButtonIcon: String {
+        if hintsRevealed == 0 { return "lightbulb" }
+        if hintsRevealed >= totalSteps { return "lightbulb.fill" }
+        return "lightbulb.fill"
+    }
+
+    private var peekButtonLabel: String {
+        if hintsRevealed == 0 { return totalSteps > 1 ? "Hint 1 of \(totalSteps)" : "Peek hint" }
+        if hintsRevealed >= totalSteps { return "All revealed" }
+        return "Hint \(hintsRevealed + 1) of \(totalSteps)"
+    }
+
+    private var peekButtonHelp: String {
+        if hintsRevealed == 0 { return "Reveal the first nudge" }
+        if hintsRevealed >= totalSteps { return "All hints revealed" }
+        return "Reveal the next step of the solution"
+    }
+
+    private func advanceHint() {
+        guard hintsRevealed < totalSteps else { return }
+        if hintsRevealed == 0 { store.peekHint() }   // count only first peek
+        withAnimation(.easeInOut(duration: 0.2)) { hintsRevealed += 1 }
     }
 
     // MARK: - Helpers
