@@ -7,14 +7,12 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 ## Build & install
 
 ```bash
-./build.sh                                 # rebuild .app bundle
-pkill -x Focus 2>/dev/null
-rm -rf /Applications/Focus.app             # rm matters — cp -r over an existing .app leaves stale files
-cp -r Focus.app /Applications/
-open /Applications/Focus.app
+./deploy.sh      # build → back up sessions → quit → replace /Applications/Focus.app → relaunch
 ```
 
-> **Always use `./build.sh`, never bare `swift build`.** Bare `swift build` rebuilds the binary at `.build/release/Focus` but does NOT copy it into `Focus.app/Contents/MacOS/Focus`, so the bundle stays stale and `/Applications/Focus.app` won't reflect changes.
+`build.sh` alone builds to `.build/app.noindex/Focus.app` (the `.noindex` keeps Spotlight from listing a duplicate). `/Applications/Focus.app` is the only copy that should exist. `deploy.sh` also deletes stale `Focus.app` / `LockIn.app` / `FocusTimer.app` bundles left in the repo root by older builds.
+
+> **Always use `./build.sh` / `./deploy.sh`, never bare `swift build`.** Bare `swift build` only rebuilds `.build/release/Focus`, not the app bundle.
 
 ## Architecture
 
@@ -117,7 +115,7 @@ Requires admin password on first setup. Sets up sudoers entry + helper script. M
 - **No comments in code unless WHY is non-obvious.** The user reads the diff; obvious comments are noise.
 - **No "what changed" recap summaries** at end of responses — keep responses tight.
 - **Edit existing files over creating new ones.**
-- Only call `./build.sh` (never bare `swift build`) before installing.
+- Install with `./deploy.sh` (never bare `swift build`).
 
 ## Roadmap status
 

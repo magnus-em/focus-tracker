@@ -1,7 +1,30 @@
 #!/bin/bash
 # deploy.sh — safe install that preserves Focus session data
-# Usage: ./deploy.sh (run from repo root after ./build.sh)
+# Usage: ./deploy.sh (run from repo root) — builds, installs to /Applications, relaunches
 set -e
+cd "$(dirname "$0")"
+
+./build.sh
+APP="$PWD/.build/app.noindex/Focus.app"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+# Old builds left in the repo folder show up as duplicate apps in Spotlight.
+for old in Focus.app LockIn.app FocusTimer.app; do
+    if [ -d "$old" ]; then
+        "$LSREGISTER" -u "$PWD/$old" 2>/dev/null || true
+        rm -rf "$old"
+        echo "Removed stale $old from repo folder"
+    fi
+done
+for old in /Applications/LockIn.app /Applications/FocusTimer.app; do
+    if [ -d "$old" ]; then
+        read -r -p "Remove old build $old? [y/N] " ans
+        if [ "$ans" = "y" ]; then
+            "$LSREGISTER" -u "$old" 2>/dev/null || true
+            rm -rf "$old"
+        fi
+    fi
+done
 
 SESSIONS_FILE="$HOME/Library/Application Support/Focus/sessions.json"
 BACKUP="/tmp/focus_sessions_backup_$(date +%Y%m%d_%H%M%S).json"
@@ -43,7 +66,10 @@ else
 fi
 
 echo "── Installing ───────────────────────────────"
-cp -r Focus.app /Applications/
+# rm first — cp -r over an existing .app leaves stale files behind
+rm -rf /Applications/Focus.app
+cp -R "$APP" /Applications/
+"$LSREGISTER" -u "$APP" 2>/dev/null || true
 
 echo "── Verifying ────────────────────────────────"
 if [ -f "$SESSIONS_FILE" ]; then

@@ -62,11 +62,7 @@ After enrolling, Xcode adds the cert automatically when you sign in via
 Then rebuild + reinstall:
 
 ```bash
-./build.sh
-pkill -x Focus
-rm -rf /Applications/Focus.app
-cp -r Focus.app /Applications/
-open /Applications/Focus.app
+./deploy.sh
 ```
 
 If you see `Signing with: Developer ID Application: <Your Name> (TEAMID)` in

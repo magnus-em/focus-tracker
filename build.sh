@@ -8,7 +8,11 @@ fi
 echo "Building Focus..."
 swift build -c release
 
-APP_DIR="Focus.app/Contents"
+# Build the bundle under .build/*.noindex so Spotlight never indexes it —
+# otherwise a second "Focus" shows up next to /Applications/Focus.app.
+APP="$PWD/.build/app.noindex/Focus.app"
+rm -rf "$APP"
+APP_DIR="$APP/Contents"
 mkdir -p "$APP_DIR/MacOS"
 mkdir -p "$APP_DIR/Resources"
 
@@ -100,22 +104,18 @@ fi
 
 # Strip xattrs that iCloud Drive adds to files under ~/Documents — they
 # break codesigning with "resource fork ... not allowed".
-ditto --norsrc --noextattr --noacl Focus.app /tmp/Focus.app.staged
-rm -rf Focus.app
-mv /tmp/Focus.app.staged Focus.app
+rm -rf /tmp/Focus.app.staged
+ditto --norsrc --noextattr --noacl "$APP" /tmp/Focus.app.staged
+rm -rf "$APP"
+mv /tmp/Focus.app.staged "$APP"
 
 if [ -n "$SIGN_IDENTITY" ]; then
     echo "Signing with: $SIGN_IDENTITY"
-    codesign --force --deep --sign "$SIGN_IDENTITY" --entitlements "$SIGN_ENTITLEMENTS" --options runtime Focus.app
+    codesign --force --deep --sign "$SIGN_IDENTITY" --entitlements "$SIGN_ENTITLEMENTS" --options runtime "$APP"
 else
     echo "No signing cert found — signing ad-hoc (CloudKit will NOT work)."
-    codesign --force --deep --sign - --entitlements "$SIGN_ENTITLEMENTS" Focus.app
+    codesign --force --deep --sign - --entitlements "$SIGN_ENTITLEMENTS" "$APP"
 fi
 
-echo ""
-echo "Build complete!"
-echo ""
-echo "  Run directly:  .build/release/Focus"
-echo "  Or use app:    open Focus.app"
-echo ""
-echo "  To install:    cp -r Focus.app /Applications/"
+echo "Built $APP"
+echo "Install with ./deploy.sh"
