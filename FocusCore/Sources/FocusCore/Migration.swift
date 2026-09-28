@@ -123,11 +123,8 @@ public enum FocusMigration {
               let db else { return [] }
         defer { sqlite3_close(db) }
 
-        // ZENTITYID=6 corresponds to StoredWorkSession in this schema.
-        // (Z_PRIMARYKEY confirms it; if SwiftData ever reshuffles entity
-        // numbers, the LEFT JOIN still detects "no CK metadata for this
-        // row" regardless of which entity it belongs to — but we scope to
-        // work sessions only.)
+        // Joining on s.Z_ENT (not a hard-coded entity number) keeps this
+        // correct when SwiftData renumbers entities as models are added.
         let sql = """
         SELECT hex(s.ZID)
         FROM ZSTOREDWORKSESSION s

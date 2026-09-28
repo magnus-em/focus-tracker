@@ -7,7 +7,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 ## Build & install
 
 ```bash
-./deploy.sh      # build → back up sessions → quit → replace /Applications/Focus.app → relaunch
+./deploy.sh      # build → back up SwiftData store → quit → replace /Applications/Focus.app → relaunch
 ```
 
 `build.sh` alone builds to `.build/app.noindex/Focus.app` (the `.noindex` keeps Spotlight from listing a duplicate). `/Applications/Focus.app` is the only copy that should exist. `deploy.sh` also deletes stale `Focus.app` / `LockIn.app` / `FocusTimer.app` bundles left in the repo root by older builds.
@@ -20,12 +20,12 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 
 | File | Role |
 |------|------|
-| `Sources/SessionStore.swift` | Work + break sessions. `~/Library/Application Support/Focus/sessions.json`. Computes today/lifetime metrics, streaks, consistency, best week, by-tag splits, daily summaries, heatmap data. |
-| `Sources/DayStore.swift` | Day boundaries (`DayRecord { calendarDay, dayStart, dayEnd }`). `dayrecords.json`. |
-| `Sources/ProblemStore.swift` | Logged problems per domain. `problems.json`. |
-| `Sources/ScratchStore.swift` | Scratchpad checklist items. `scratch.json`. |
+| `Sources/SessionStore.swift` | Work + break sessions (SwiftData `StoredWorkSession`). Computes today/lifetime metrics, streaks, consistency, best week, by-tag splits, daily summaries, heatmap data. |
+| `Sources/DayStore.swift` | Day boundaries (`DayRecord { calendarDay, dayStart, dayEnd }`). SwiftData `StoredDayRecord`. |
+| `Sources/ProblemStore.swift` | Logged problems per domain. SwiftData `StoredProblem`. |
+| `Sources/ScratchStore.swift` | Scratchpad checklist items. SwiftData `StoredScratchItem`. |
 | `Sources/CommitmentStore.swift` | AVFoundation voice oath recorder. Audio at `oaths/YYYY-MM-DD.m4a`. |
-| `Sources/AppSettings.swift` | All settings, UserDefaults-backed. Bundle id `com.focus.app`. |
+| `Sources/AppSettings.swift` | All settings, UserDefaults-backed. Bundle id `com.magnus.focus`. |
 
 ### Logic / glue
 
@@ -65,12 +65,10 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 - `domain: ProblemDomain` (Quant / SWE), `categories: [String]`, `var difficulty: ProblemDifficulty`, `var confidence: Confidence`, `var needsReview`, `var notes`, `var url`, etc. Spaced-repetition `reviewDueDate` derived from confidence + needsReview.
 
 ### Storage paths
-- `~/Library/Application Support/Focus/sessions.json` (sessions)
-- `~/Library/Application Support/Focus/dayrecords.json` (day boundaries)
-- `~/Library/Application Support/Focus/problems.json`
-- `~/Library/Application Support/Focus/scratch.json`
+- `~/Library/Application Support/default.store` — SwiftData (SQLite) store for sessions, day records, problems, scratch, practice/mastery, timer state. Mirrored to CloudKit. Count sessions: `sqlite3 -readonly ~/Library/Application\ Support/default.store 'select count(*) from ZSTOREDWORKSESSION'`
+- The old `*.json` files were migrated in May 2026 and survive only as `*.pre-swiftdata.bak`. `zetamac.json` and `sync.log` in `~/Library/Application Support/Focus/` are still live.
 - `~/Library/Application Support/Focus/oaths/YYYY-MM-DD.m4a`
-- UserDefaults `com.focus.app` (settings, commitment timestamp, timer crash checkpoint)
+- UserDefaults `com.magnus.focus` (settings, commitment timestamp, timer crash checkpoint)
 
 ## Key behaviours
 
