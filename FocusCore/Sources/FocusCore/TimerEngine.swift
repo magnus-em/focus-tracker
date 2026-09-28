@@ -99,6 +99,25 @@ public final class FocusTimerEngine: ObservableObject {
         localBroadcast.onMessage = { [weak self] msg in
             self?.applyRemoteMessage(msg)
         }
+        // When a new peer joins Multipeer, immediately rebroadcast our
+        // current state. Without this, a session that started before the
+        // peer was reachable would be invisible to the peer (CloudKit
+        // silent push is unreliable, especially Mac side).
+        localBroadcast.onPeerConnected = { [weak self] in
+            guard let self else { return }
+            // Only re-broadcast if WE have something the peer needs to know
+            // about. If we're idle, broadcasting idle to a peer that's
+            // running would clobber their session.
+            guard self.isActive else {
+                SyncLog.event("mpPeerConnectSkip", ["reason": "localIdle"])
+                return
+            }
+            SyncLog.event("mpPeerConnectRebroadcast", [
+                "phase": self.phase.rawValue,
+                "isRunning": self.isRunning,
+            ])
+            self.pushSharedState()
+        }
         // On launch, adopt the shared state if we're locally idle and
         // the stored state is meaningful (version > 0, non-idle). NO
         // deviceID filter here — at startup our in-memory state is empty,
@@ -182,6 +201,12 @@ public final class FocusTimerEngine: ObservableObject {
     // MARK: - Public controls
 
     public func start() {
+        SyncLog.event("localStart", [
+            "phase": phase.rawValue,
+            "totalTime": totalTime,
+            "timeRemaining": timeRemaining,
+            "label": currentLabel,
+        ])
         if sessionStartTime == nil { sessionStartTime = Date() }
         lastResumeTime = Date()
         isRunning = true
@@ -194,6 +219,10 @@ public final class FocusTimerEngine: ObservableObject {
     }
 
     public func pause() {
+        SyncLog.event("localPause", [
+            "phase": phase.rawValue,
+            "timeRemaining": timeRemaining,
+        ])
         if let resume = lastResumeTime {
             elapsedBeforePause += Date().timeIntervalSince(resume)
         }
@@ -278,7 +307,27 @@ public final class FocusTimerEngine: ObservableObject {
     /// needs it.)
     private func applyRemoteMessage(_ msg: LocalTimerBroadcast.Message) {
         guard let phaseEnum = StoredTimerState.Phase(rawValue: msg.phase) else { return }
+        SyncLog.event("applyMp", [
+            "phase": msg.phase,
+            "isRunning": msg.isRunning,
+            "totalSeconds": msg.totalSeconds,
+            "endTime": SyncLog.opt(msg.endTime),
+            "remaining": msg.remainingSeconds,
+            "msgTs": msg.timestamp,
+            "localBefore": [
+                "phase": phase.rawValue,
+                "isRunning": isRunning,
+                "totalTime": totalTime,
+                "timeRemaining": timeRemaining,
+            ],
+        ])
         if phaseEnum == .idle {
+            // CRITICAL: a remote idle arriving while WE have an active session
+            // would silently destroy minutes/hours of work. Save first, then
+            // reset. (Triggered by e.g. peer launching and sending a stale
+            // idle broadcast, or by a CK row whose authoring device wrongly
+            // wiped its state.)
+            savePartialIfActive(reason: "remoteIdleMp")
             ticker?.cancel(); ticker = nil
             isRunning = false
             elapsedBeforePause = 0
@@ -324,8 +373,27 @@ public final class FocusTimerEngine: ObservableObject {
 
     private func applyRemoteState(_ state: StoredTimerState) {
         let remotePhase = state.phase
+        SyncLog.event("applyCk", [
+            "version": state.version,
+            "phase": remotePhase.rawValue,
+            "isRunning": state.isRunning,
+            "totalSeconds": state.totalSeconds,
+            "endTime": SyncLog.opt(state.endTime),
+            "fromDevice": String(state.deviceID.prefix(8)),
+            "updatedAt": state.updatedAt,
+            "localBefore": [
+                "phase": phase.rawValue,
+                "isRunning": isRunning,
+                "totalTime": totalTime,
+                "timeRemaining": timeRemaining,
+            ],
+        ])
         if remotePhase == .idle {
-            // Remote stopped — stop locally without saving (we trust remote to have saved).
+            // "Remote trusted to have saved" was wrong — if the remote idle
+            // arrives from a peer that was *just opened* (and broadcast its
+            // own idle state without knowing we were running), the remote
+            // never saved our session. Save partial first.
+            savePartialIfActive(reason: "remoteIdleCk")
             ticker?.cancel(); ticker = nil
             isRunning = false
             elapsedBeforePause = 0
@@ -439,6 +507,41 @@ public final class FocusTimerEngine: ObservableObject {
         var e = elapsedBeforePause
         if let resume = lastResumeTime { e += Date().timeIntervalSince(resume) }
         return e
+    }
+
+    /// If we have an in-progress local session with at least 60s elapsed,
+    /// persist it to SessionStore before any caller wipes the engine state.
+    /// Called from every code path that resets state due to a *remote*
+    /// signal (idle from CK or Multipeer) — without this we silently
+    /// throw away the user's accumulated time.
+    private func savePartialIfActive(reason: String) {
+        guard let start = sessionStartTime else { return }
+        let elapsed = currentElapsedSeconds
+        guard elapsed >= 60 else {
+            SyncLog.event("savePartialSkip", [
+                "reason": reason,
+                "elapsed": elapsed,
+                "phase": phase.rawValue,
+            ])
+            return
+        }
+        let type: WorkSession.SessionType = (phase == .work) ? .work : .shortBreak
+        let kinds = currentBreakKinds.isEmpty ? nil : currentBreakKinds
+        let label = currentLabel.isEmpty ? nil : currentLabel
+        SyncLog.event("savePartial", [
+            "reason": reason,
+            "elapsedMin": elapsed / 60.0,
+            "phase": phase.rawValue,
+            "label": label ?? "",
+            "startTime": start,
+        ])
+        insertSession(WorkSession(
+            startTime: start,
+            durationMinutes: elapsed / 60.0,
+            type: type,
+            label: type == .work ? label : nil,
+            breakKinds: type == .work ? nil : kinds
+        ))
     }
 
     private func tick() {

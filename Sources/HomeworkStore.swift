@@ -12,6 +12,13 @@ class HomeworkStore: ObservableObject {
         refresh()
     }
 
+    /// Public hook so other stores can ask us to re-fetch after they
+    /// mutate the underlying SwiftData container from their own context
+    /// (e.g. `PracticeStore.clearAllPracticeData()` deletes homework
+    /// rows from its context — our `items` array would be stale until
+    /// we re-fetch).
+    func refreshFromExternal() { refresh() }
+
     private func refresh() {
         var descriptor = FetchDescriptor<StoredHomework>(
             sortBy: [SortDescriptor(\.date)]
@@ -40,8 +47,97 @@ class HomeworkStore: ObservableObject {
         model.usedAI = item.usedAI
         model.notes = item.notes
         model.urlString = item.url
+        // Previously omitted — bug. Without these the review queue
+        // never updated when the user toggled "needs review" or set
+        // a custom review date.
+        model.needsReview = item.needsReview
+        model.reviewOverrideDate = item.reviewOverrideDate
+        model.catalogID = item.catalogID
         try? context.save()
         refresh()
+    }
+
+    /// Upsert a homework entry from a Practice Mode finish event. If an
+    /// entry with the same `catalogID` already exists, update it in place
+    /// (so the homework row reflects the LATEST attempt's confidence /
+    /// difficulty / review flag, not a parallel history). Otherwise
+    /// create a new entry. Returns the resulting HomeworkProblem.
+    ///
+    /// Why upsert by catalogID: the user wants one "current state" row
+    /// per problem in the homework list. The full attempt history lives
+    /// in StoredDrillAttempt; this method just keeps the homework row's
+    /// confidence/needsReview in sync with the most recent attempt.
+    @discardableResult
+    func upsertFromPractice(catalogID: String?,
+                            title: String,
+                            source: String,
+                            difficulty: ProblemDifficulty,
+                            confidence: Confidence,
+                            needsReview: Bool,
+                            notes: String,
+                            url: String,
+                            solveMinutes: Int?,
+                            usedAI: Bool? = nil,
+                            reviewOverrideDate: Date? = nil) -> HomeworkProblem {
+        // Look up by catalogID first (the canonical identity for catalog
+        // problems). Manual entries with no catalogID never upsert —
+        // they always create a fresh row.
+        if let catID = catalogID,
+           let existing = items.first(where: { $0.catalogID == catID }) {
+            let updated = HomeworkProblem(
+                id: existing.id,
+                date: Date(),                 // bump to latest attempt
+                title: title,
+                source: source,
+                difficulty: difficulty,
+                confidence: confidence,
+                // usedAI ratchets up — once you've used AI on a problem, the
+                // row stays flagged so the dashboard can show "did this with AI"
+                // forever (until the user manually clears it).
+                usedAI: (usedAI ?? false) || existing.usedAI,
+                notes: mergedNotes(existing.notes, notes),
+                url: url.isEmpty ? existing.url : url,
+                catalogID: catID,
+                needsReview: needsReview,
+                // Caller-provided override wins; otherwise preserve any
+                // existing user-set override.
+                reviewOverrideDate: reviewOverrideDate ?? existing.reviewOverrideDate
+            )
+            update(updated)
+            return updated
+        }
+        let entry = HomeworkProblem(
+            title: title,
+            source: source,
+            difficulty: difficulty,
+            confidence: confidence,
+            usedAI: usedAI ?? false,
+            notes: notes,
+            url: url,
+            catalogID: catalogID,
+            needsReview: needsReview,
+            reviewOverrideDate: reviewOverrideDate
+        )
+        add(entry)
+        return entry
+    }
+
+    /// Join old notes + new attempt notes with a newline separator so
+    /// we don't clobber the user's prior writing. New on top.
+    private func mergedNotes(_ existing: String, _ new: String) -> String {
+        let trimmedNew = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedOld = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedNew.isEmpty { return existing }
+        if trimmedOld.isEmpty { return trimmedNew }
+        return "\(trimmedNew)\n---\n\(trimmedOld)"
+    }
+
+    // MARK: - Review queue
+
+    /// Problems whose computed review date has passed. Source of truth
+    /// for the "Due for review" surface in Practice Mode.
+    var dueForReview: [HomeworkProblem] {
+        items.filter { $0.isDueForReview }.sorted { ($0.reviewDueDate ?? .distantFuture) < ($1.reviewDueDate ?? .distantFuture) }
     }
 
     func delete(id: UUID) {

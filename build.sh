@@ -18,6 +18,14 @@ mkdir -p "$APP_DIR/Resources"
 
 cp .build/release/Focus "$APP_DIR/MacOS/"
 
+# SPM emits resources (KaTeX bundle for Practice Mode math rendering)
+# as a separate .bundle next to the binary. Copy it into the app's
+# Resources so `Bundle.main.url(forResource:)` can find it.
+if [ -d ".build/release/Focus_Focus.bundle" ]; then
+    rm -rf "$APP_DIR/Resources/Focus_Focus.bundle"
+    cp -R .build/release/Focus_Focus.bundle "$APP_DIR/Resources/"
+fi
+
 # Regenerate and embed app icon
 swift make_icon.swift > /dev/null
 iconutil -c icns /tmp/AppIcon.iconset -o "$APP_DIR/Resources/AppIcon.icns"

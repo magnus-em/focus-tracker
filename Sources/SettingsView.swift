@@ -196,6 +196,11 @@ struct SettingsView: View {
 
                 Divider()
 
+                SectionLabel("PRACTICE MODE")
+                PracticeNewCapRow()
+
+                Divider()
+
                 SectionLabel("PROBLEM GOALS")
                 HStack {
                     Spacer()
@@ -687,5 +692,30 @@ private struct ToggleRow: View {
         }
         .toggleStyle(.switch)
         .controlSize(.small)
+    }
+}
+
+/// Daily-new-problem cap stepper for Practice Mode. Persisted via the
+/// same @AppStorage key the idle screen reads (`practice.dailyNewCap`).
+private struct PracticeNewCapRow: View {
+    @AppStorage("practice.dailyNewCap") private var cap: Int = 5
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("New problems per day").font(.system(size: 12, weight: .medium))
+                Text("Cap on fresh familiarizations. Reviews don't count toward this.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Stepper(value: $cap, in: 1...20) {
+                Text("\(cap)")
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .frame(width: 24, alignment: .trailing)
+            }
+            .controlSize(.small)
+            .labelsHidden()
+        }
     }
 }

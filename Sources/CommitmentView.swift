@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CommitmentView: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var dayStore: DayStore
     @Binding var isShowing: Bool
 
     @State private var text = ""
@@ -65,7 +66,9 @@ struct CommitmentView: View {
 
                 VStack(spacing: 6) {
                     Button {
-                        settings.markCommitmentDone(text: text.trimmingCharacters(in: .whitespaces))
+                        let cleaned = text.trimmingCharacters(in: .whitespaces)
+                        settings.markCommitmentDone(text: cleaned)
+                        dayStore.setCommitment(text: cleaned)
                         isShowing = false
                     } label: {
                         Text("Start My Day")
@@ -81,6 +84,7 @@ struct CommitmentView: View {
 
                     Button {
                         settings.markCommitmentDone(text: "")
+                        dayStore.setCommitment(text: "")
                         isShowing = false
                     } label: {
                         Text("Skip for today")

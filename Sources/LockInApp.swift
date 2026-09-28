@@ -4,17 +4,30 @@ import FocusCore
 
 private var _pauseHotKey: GlobalHotKey?
 
-/// Shared SwiftData container — local-only for now. Flip `cloudKitSync: true`
-/// once the iCloud entitlement is wired up via Xcode project + provisioning.
-/// Reads UserDefaults key `cloudKitSyncEnabled` so you can toggle without rebuilding.
-/// Default ON — flip to false if signing isn't set up yet.
+/// Shared SwiftData container. CloudKit sync is on by default — the build
+/// is properly entitled for `iCloud.com.magnus.focustracker` and we want
+/// Mac ↔ iPad sync. The previous one-off async crash during
+/// `NSCloudKitMirroringDelegate._performSetupRequest` was triggered by a
+/// mass-delete from the practice-history Reset button burning through
+/// CloudKit's setup queue all at once — a one-shot, not a structural
+/// problem. We re-enable sync by default and also force-clear any
+/// stale `cloudKitSyncEnabled = false` that the previous safety override
+/// may have written to UserDefaults, so the iPad starts catching up on
+/// the next launch.
 private let focusContainer: ModelContainer = {
+    // One-time recovery: previous builds force-disabled sync after the
+    // crash. Force-clear that flag so this launch re-enables iCloud.
+    // (Idempotent — removing a missing key is a no-op.)
+    UserDefaults.standard.removeObject(forKey: "cloudKitSyncEnabled")
+
     let useCloud = UserDefaults.standard.object(forKey: "cloudKitSyncEnabled") as? Bool ?? true
     do {
         return try FocusModelContainer.make(cloudKitSync: useCloud)
     } catch {
-        // If CloudKit init fails (no entitlement, no signing), fall back to local-only.
-        print("[FocusContainer] CloudKit init failed, falling back to local: \(error)")
+        // Cloud setup can fail (no entitlement on a stripped build, no
+        // iCloud login, network down at launch). Fall back to local-only
+        // so the app still opens; sync resumes the next time it succeeds.
+        print("[FocusContainer] CloudKit container init failed, falling back to local-only: \(error)")
         return try! FocusModelContainer.make(cloudKitSync: false)
     }
 }()
@@ -53,6 +66,12 @@ struct FocusApp: App {
     @StateObject private var dayStore: DayStore
     @StateObject private var dashboardController: DashboardWindowController
     @StateObject private var onboardingController: OnboardingWindowController
+    @StateObject private var practiceStore: PracticeStore
+    @StateObject private var masteryStore: MasteryStore
+    @StateObject private var answerOverridesStore: AnswerOverridesStore
+    @StateObject private var practiceController: PracticeWindowController
+    @StateObject private var zetamacStore: ZetamacStore
+    @StateObject private var zetamacController: ZetamacWindowController
 
     init() {
         runOneShotMigration()
@@ -68,14 +87,32 @@ struct FocusApp: App {
         timer.stateSync = stateSync
         timer.localBroadcast = LocalTimerBroadcast(deviceID: stateSync.deviceID)
 
+        // Construct stores that other stores depend on FIRST so we can
+        // share one instance (rather than two HomeworkStores with separate
+        // ModelContexts diverging on @Published caches).
+        let homework = HomeworkStore(container: focusContainer)
+        let mastery = MasteryStore(container: focusContainer)
+
         _sessionStore        = StateObject(wrappedValue: store)
         _settings            = StateObject(wrappedValue: appSettings)
         _timerManager        = StateObject(wrappedValue: timer)
         _problemStore        = StateObject(wrappedValue: ProblemStore(container: focusContainer))
-        _homeworkStore       = StateObject(wrappedValue: HomeworkStore(container: focusContainer))
+        _homeworkStore       = StateObject(wrappedValue: homework)
         _scratchStore        = StateObject(wrappedValue: ScratchStore(container: focusContainer))
         _dayStore            = StateObject(wrappedValue: DayStore(container: focusContainer))
         _dashboardController = StateObject(wrappedValue: DashboardWindowController())
+        let practice = PracticeStore(container: focusContainer, homeworkStore: homework)
+        practice.attach(masteryStore: mastery)
+        _practiceStore       = StateObject(wrappedValue: practice)
+        _masteryStore        = StateObject(wrappedValue: mastery)
+        let answerOverrides = AnswerOverridesStore()
+        _answerOverridesStore = StateObject(wrappedValue: answerOverrides)
+        let practiceCtrl = PracticeWindowController()
+        _practiceController  = StateObject(wrappedValue: practiceCtrl)
+        let zetamac = ZetamacStore()
+        _zetamacStore        = StateObject(wrappedValue: zetamac)
+        let zetamacCtrl = ZetamacWindowController()
+        _zetamacController   = StateObject(wrappedValue: zetamacCtrl)
         let onboarding = OnboardingWindowController()
         _onboardingController = StateObject(wrappedValue: onboarding)
 
@@ -85,8 +122,25 @@ struct FocusApp: App {
             forName: NSApplication.didFinishLaunchingNotification,
             object: nil, queue: .main
         ) { _ in
-            if !appSettings.hasCompletedOnboarding {
-                onboarding.open(settings: appSettings)
+            Task { @MainActor in
+                if !appSettings.hasCompletedOnboarding {
+                    onboarding.open(settings: appSettings)
+                }
+                // Restore windows that were open at the previous quit. The
+                // active-problem snapshot (PracticeStore) and last-results
+                // history (ZetamacStore) are already rehydrated from disk;
+                // this just brings their windows back so the user lands
+                // where they left off rather than having to navigate from
+                // the popover every relaunch.
+                if PracticeWindowController.wasOpenAtQuit {
+                    practiceCtrl.open(store: practice,
+                                      homeworkStore: homework,
+                                      masteryStore: mastery,
+                                      answerOverridesStore: answerOverrides)
+                }
+                if ZetamacWindowController.wasOpenAtQuit {
+                    zetamacCtrl.open(store: zetamac)
+                }
             }
         }
 
@@ -117,6 +171,9 @@ struct FocusApp: App {
                 homeworkStore: homeworkStore,
                 scratchStore: scratchStore,
                 dayStore: dayStore,
+                practiceStore: practiceStore,
+                homeworkStoreForPractice: homeworkStore,
+                zetamacStore: zetamacStore,
                 openDashboard: { [self] in
                     dashboardController.open(
                         sessionStore: sessionStore,
@@ -129,6 +186,15 @@ struct FocusApp: App {
                 },
                 openOnboarding: { [self] in
                     onboardingController.open(settings: settings)
+                },
+                openPractice: { [self] in
+                    practiceController.open(store: practiceStore,
+                                            homeworkStore: homeworkStore,
+                                            masteryStore: masteryStore,
+                                            answerOverridesStore: answerOverridesStore)
+                },
+                openZetamac: { [self] in
+                    zetamacController.open(store: zetamacStore)
                 }
             )
             .modelContainer(focusContainer)
@@ -151,11 +217,17 @@ struct PopoverContent: View {
     @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var scratchStore: ScratchStore
     @ObservedObject var dayStore: DayStore
+    @ObservedObject var practiceStore: PracticeStore
+    @ObservedObject var homeworkStoreForPractice: HomeworkStore
+    @ObservedObject var zetamacStore: ZetamacStore
     let openDashboard: () -> Void
     let openOnboarding: () -> Void
+    let openPractice: () -> Void
+    let openZetamac: () -> Void
 
     @State private var selectedTab = 0
     @State private var showCommitment = false
+    @State private var reviewTarget: DayRecord? = nil
     // Prevents onAppear re-triggering commitment (and microphone requests) after each session end
     @AppStorage("lastCommitmentPromptDay") private var lastCommitmentPromptDay: Double = 0
 
@@ -174,14 +246,45 @@ struct PopoverContent: View {
                 sessionStore.touchForToday()
                 dayStore.touchForToday()
 
+                // Backfill today's DayRecord with settings.todayCommitment
+                // for installs that committed before commitment history was
+                // tracked per-day. Idempotent: only runs if the record has
+                // no text yet.
+                if !settings.needsCommitmentToday,
+                   !settings.todayCommitment.isEmpty,
+                   (dayStore.todayRecord?.commitmentText ?? "").isEmpty {
+                    dayStore.setCommitment(text: settings.todayCommitment)
+                }
+
                 let todayStart = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
                 if dayStore.isDayStarted && settings.needsCommitmentToday
                     && lastCommitmentPromptDay < todayStart {
                     lastCommitmentPromptDay = todayStart
                     showCommitment = true
                 }
+                // Catch unreviewed past commitments — surfaces a Yes/No prompt
+                // for yesterday (or earlier) so the streak stays honest. Only
+                // when the morning commitment isn't currently in the way.
+                if !showCommitment, let pending = dayStore.pendingReviewDay() {
+                    reviewTarget = pending
+                }
             }
     }
+
+    private var practiceElapsedShort: String {
+        let s = Int(practiceStore.elapsedSeconds)
+        return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    /// MM:SS countdown for the active Math Sprint, surfaced on the
+    /// popover button so the user can see at a glance the game is alive
+    /// (without reopening the window).
+    private var zetamacLiveTimeShort: String {
+        let s = zetamacStore.liveSecondsLeft
+        return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    private var dueReviewBadge: Int { homeworkStoreForPractice.dueForReview.count }
 
     private func tabChipButton(icon: String, tag: Int) -> some View {
         let selected = selectedTab == tag
@@ -195,38 +298,217 @@ struct PopoverContent: View {
         .glassTabChip(selected: selected)
     }
 
+    private var dayState: DayGateState {
+        if dayStore.isDayEnded { return .closed }
+        if dayStore.isDayStarted { return .open }
+        return .unopened
+    }
+
     private var popoverBody: some View {
         ZStack {
-            VStack(spacing: 0) {
-                HStack(spacing: 4) {
-                    tabChipButton(icon: "timer", tag: 0)
-                    tabChipButton(icon: "chart.bar.fill", tag: 1)
-                    tabChipButton(icon: "checklist", tag: 2)
-                    tabChipButton(icon: "brain.head.profile", tag: 3)
-                    tabChipButton(icon: "gearshape.fill", tag: 4)
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 2)
-
-                Group {
-                    switch selectedTab {
-                    case 0: TimerView(
-                        timer: timerManager, store: sessionStore, settings: settings,
-                        dayStore: dayStore, showCommitment: $showCommitment
+            Group {
+                switch dayState {
+                case .unopened:
+                    DayOpenCoverView(
+                        dayStore: dayStore,
+                        settings: settings,
+                        sessionStore: sessionStore,
+                        onBegin: {
+                            withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
+                                dayStore.startDay()
+                            }
+                            if settings.commitmentEnabled && settings.needsCommitmentToday {
+                                showCommitment = true
+                            }
+                        }
                     )
-                    case 1: StatsView(store: sessionStore, settings: settings)
-                    case 2: ProblemsView(store: problemStore, homeworkStore: homeworkStore, settings: settings)
-                    case 3: ScratchpadView(store: scratchStore)
-                    default: SettingsView(settings: settings, timer: timerManager, store: sessionStore, openOnboarding: openOnboarding)
-                    }
+                    .frame(height: 600)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                case .closed:
+                    DayClosedCoverView(
+                        dayStore: dayStore,
+                        sessionStore: sessionStore,
+                        settings: settings,
+                        onReopen: {
+                            withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
+                                dayStore.reopenDay()
+                            }
+                        }
+                    )
+                    .frame(height: 600)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                case .open:
+                    openBookContent
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 }
-                .frame(height: 480)
+            }
+            .animation(.spring(response: 0.55, dampingFraction: 0.85), value: dayState)
 
-                Divider()
+            if showCommitment {
+                CommitmentView(settings: settings, dayStore: dayStore, isShowing: $showCommitment)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+                    .zIndex(10)
+            }
 
-                // Prominent Dashboard CTA — clearer affordance than the
-                // tiny secondary link we used before.
+            if let target = reviewTarget {
+                CommitmentReviewView(
+                    dayStore: dayStore,
+                    day: target,
+                    isShowing: Binding(
+                        get: { reviewTarget != nil },
+                        set: { if !$0 { reviewTarget = nil } }
+                    )
+                )
+                .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+                .zIndex(11)
+            }
+
+            // Always-available Quit (sits in the lower-right corner whether
+            // the day is open or not — the cover gates everything else but
+            // shouldn't trap the user in the app).
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button("Quit Focus") {
+                        NSApplication.shared.terminate(nil)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+            }
+            .allowsHitTesting(true)
+        }
+    }
+
+    private var openBookContent: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                tabChipButton(icon: "timer", tag: 0)
+                tabChipButton(icon: "chart.bar.fill", tag: 1)
+                tabChipButton(icon: "checklist", tag: 2)
+                tabChipButton(icon: "brain.head.profile", tag: 3)
+                tabChipButton(icon: "gearshape.fill", tag: 4)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 2)
+
+            Group {
+                switch selectedTab {
+                case 0: TimerView(
+                    timer: timerManager, store: sessionStore, settings: settings,
+                    dayStore: dayStore, showCommitment: $showCommitment,
+                    reviewTarget: $reviewTarget
+                )
+                case 1: StatsView(store: sessionStore, settings: settings)
+                case 2: ProblemsView(store: problemStore, homeworkStore: homeworkStore, settings: settings)
+                case 3: ScratchpadView(store: scratchStore)
+                default: SettingsView(settings: settings, timer: timerManager, store: sessionStore, openOnboarding: openOnboarding)
+                }
+            }
+            .frame(height: 480)
+
+            Divider()
+
+                // Practice Mode CTA — opens the Stat-110 pacing tracker in
+                // its own window. Title only (no "· Stat 110 pacing"
+                // subtitle that was crowding the row at narrow widths);
+                // when a session is active or reviews are due, the badge
+                // carries that info.
+                Button {
+                    openPractice()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "scope")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(practiceStore.isActive
+                             ? "Practice · \(practiceElapsedShort)"
+                             : "Practice Mode")
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        if !practiceStore.isActive && dueReviewBadge > 0 {
+                            Text("\(dueReviewBadge) due")
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.orange.opacity(0.22)))
+                                .foregroundStyle(.orange)
+                        }
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(Color(red: 0.27, green: 0.62, blue: 0.83))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color(red: 0.27, green: 0.62, blue: 0.83).opacity(0.22), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+
+                // Math Sprint CTA. Same cleanup — title only when idle,
+                // live "Sprint · MM:SS · N right" when mid-game. Clicking
+                // mid-game just brings the existing window forward
+                // (ZetamacWindowController reuses the window if alive),
+                // so the game is never restarted by this button.
+                Button {
+                    openZetamac()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.forwardslash.minus")
+                            .font(.system(size: 13, weight: .semibold))
+                        if zetamacStore.isGameActive {
+                            Text("Sprint · \(zetamacLiveTimeShort) · \(zetamacStore.liveScore) right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("Math Sprint")
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 4)
+                        if !zetamacStore.isGameActive && zetamacStore.bestScore > 0 {
+                            Text("best \(zetamacStore.bestScore)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.green.opacity(0.18)))
+                                .foregroundStyle(.green)
+                        }
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(Color(red: 0.25, green: 0.72, blue: 0.53))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color(red: 0.25, green: 0.72, blue: 0.53).opacity(0.10))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color(red: 0.25, green: 0.72, blue: 0.53).opacity(0.22), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+
                 Button {
                     openDashboard()
                 } label: {
@@ -255,26 +537,7 @@ struct PopoverContent: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
-
-                HStack {
-                    Spacer()
-                    Button("Quit Focus") {
-                        NSApplication.shared.terminate(nil)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 6)
-            }
-
-            if showCommitment {
-                CommitmentView(settings: settings, isShowing: $showCommitment)
-                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))
-                    .zIndex(10)
-            }
+                .padding(.bottom, 24)
         }
     }
 }

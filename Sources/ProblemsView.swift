@@ -11,11 +11,11 @@ struct ProblemsView: View {
     @State private var showLog = false
     @State private var selectedProblem: ProblemEntry? = nil
     @State private var reviewExpanded = true
-    @State private var homeworkExpanded = false
-    @State private var showHomeworkLog = false
-    @State private var homeworkPrefill: Stat110PickerPrefill? = nil
-    @State private var showStat110Picker = false
     @State private var editingHomework: HomeworkProblem? = nil
+    // The Stat 110 catalog picker + dedicated homework-log overlay used
+    // to live here. Both moved to Practice Mode where homework now lives.
+    // Editing existing homework rows from the merged recent list still
+    // happens via `editingHomework`.
 
     var body: some View {
         ZStack {
@@ -38,8 +38,6 @@ struct ProblemsView: View {
                     Divider().padding(.horizontal, 8)
 
                     recentSection
-
-                    homeworkSection
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 18)
@@ -49,39 +47,6 @@ struct ProblemsView: View {
                 LogProblemOverlay(store: store, settings: settings, isShowing: $showLog)
                     .transition(.opacity.animation(.easeInOut(duration: 0.15)))
                     .zIndex(1)
-            }
-
-            if showHomeworkLog {
-                HomeworkLogOverlay(
-                    store: homeworkStore, settings: settings,
-                    isShowing: $showHomeworkLog,
-                    prefill: homeworkPrefill
-                )
-                // Forcing a unique identity per-prefill guarantees SwiftUI
-                // rebuilds the @State (and therefore re-runs `init`) instead
-                // of recycling the previous view with empty fields.
-                .id(homeworkPrefill?.catalogID ?? "manual")
-                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
-                .zIndex(3)
-            }
-
-            if showStat110Picker {
-                Stat110PickerOverlay(
-                    completedIDs: Set(homeworkStore.items.compactMap { $0.catalogID }),
-                    isShowing: $showStat110Picker
-                ) { picked in
-                    homeworkPrefill = Stat110PickerPrefill(
-                        title: picked.title,
-                        source: picked.sourceLabel,
-                        catalogID: picked.id
-                    )
-                    showStat110Picker = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        showHomeworkLog = true
-                    }
-                }
-                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
-                .zIndex(5)
             }
 
             if let editing = editingHomework {
@@ -109,9 +74,16 @@ struct ProblemsView: View {
         }
     }
 
-    // MARK: - Homework (side system)
+    // MARK: - (Removed) Homework section
+    //
+    // Was a separate collapsible tile at the bottom of this tab with the
+    // Stat 110 picker + "+" button. Confusing because there were two parallel
+    // problem systems. Homework now lives in Practice Mode; saved homework
+    // appears inline in `recentSection` alongside ProblemEntry items.
 
-    private var homeworkSection: some View {
+    private var _removedHomeworkSection: some View {
+        EmptyView()
+        /* original:
         let items = homeworkStore.byNewest
         let cal = Calendar.current
         let todayCount = items.filter { cal.isDateInToday($0.date) }.count
@@ -198,6 +170,7 @@ struct ProblemsView: View {
         }
         .background(Color.secondary.opacity(0.04))
         .cornerRadius(8)
+        */
     }
 
     // MARK: - Interview countdown
@@ -496,7 +469,46 @@ struct ProblemsView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Recent list
+    // MARK: - Recent list (problems + homework merged)
+
+    /// A row in the merged Recent list — either a ProblemEntry (LeetCode /
+    /// quant problems the user logs manually) or a HomeworkProblem (Stat
+    /// 110 catalog entries saved from Practice Mode). Both render with the
+    /// same compact row shape so the user just sees "things I worked on
+    /// recently" rather than two parallel taxonomies.
+    private enum RecentItem: Identifiable {
+        case problem(ProblemEntry)
+        case homework(HomeworkProblem)
+        var id: String {
+            switch self {
+            case .problem(let p): return "p-\(p.id.uuidString)"
+            case .homework(let h): return "h-\(h.id.uuidString)"
+            }
+        }
+        var date: Date {
+            switch self {
+            case .problem(let p): return p.date
+            case .homework(let h): return h.date
+            }
+        }
+    }
+
+    /// Merge both stores, sort by date, group by calendar day, keep last 7 days.
+    private var mergedRecentByDay: [(date: Date, items: [RecentItem])] {
+        let cal = Calendar.current
+        let all: [RecentItem] =
+            store.problems.map { .problem($0) } +
+            homeworkStore.items.map { .homework($0) }
+        var groups: [Date: [RecentItem]] = [:]
+        for item in all {
+            let day = cal.startOfDay(for: item.date)
+            groups[day, default: []].append(item)
+        }
+        return groups.map { (date: $0.key, items: $0.value.sorted { $0.date > $1.date }) }
+            .sorted { $0.date > $1.date }
+            .prefix(7)
+            .map { $0 }
+    }
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -505,7 +517,7 @@ struct ProblemsView: View {
                 .tracking(1.5)
                 .foregroundStyle(.secondary)
 
-            let days = store.byDay().prefix(7)
+            let days = mergedRecentByDay
             if days.isEmpty {
                 Text("No problems logged yet.")
                     .font(.system(size: 12))
@@ -513,17 +525,25 @@ struct ProblemsView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 8)
             } else {
-                ForEach(Array(days), id: \.date) { group in
+                ForEach(days, id: \.date) { group in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(dayLabel(group.date))
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.tertiary)
                             .padding(.bottom, 1)
-                        ForEach(group.problems.prefix(8)) { problem in
-                            Button { selectedProblem = problem } label: {
-                                ProblemRow(problem: problem)
+                        ForEach(group.items.prefix(10)) { item in
+                            switch item {
+                            case .problem(let p):
+                                Button { selectedProblem = p } label: {
+                                    ProblemRow(problem: p)
+                                }
+                                .buttonStyle(.plain)
+                            case .homework(let h):
+                                Button { editingHomework = h } label: {
+                                    HomeworkInlineRow(item: h)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -706,6 +726,58 @@ private struct ProblemRow: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(problem.difficulty.color.opacity(0.12))
+                .cornerRadius(4)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+/// Compact row for a HomeworkProblem when it appears in the merged Recent
+/// list (alongside ProblemEntry/ProblemRow). Same visual rhythm as
+/// ProblemRow — confidence dot, title, source/category line, optional
+/// review pill, difficulty chip — so the user reads them as the same
+/// kind of thing.
+private struct HomeworkInlineRow: View {
+    let item: HomeworkProblem
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(item.confidence.color)
+                .frame(width: 6, height: 6)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title.isEmpty ? item.source : item.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text(item.source)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if item.isDueForReview {
+                Text("DUE")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.6)
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.orange.opacity(0.22)))
+                    .foregroundStyle(.orange)
+            } else if item.needsReview {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+            }
+
+            Text(item.difficulty.rawValue)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(item.difficulty.color)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(item.difficulty.color.opacity(0.12))
                 .cornerRadius(4)
         }
         .contentShape(Rectangle())

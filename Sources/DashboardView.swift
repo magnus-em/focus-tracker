@@ -66,6 +66,7 @@ struct DashboardView: View {
 
     @State private var editingEvent: DayEvent? = nil
     @State private var selectedDay: Date = Calendar.current.startOfDay(for: Date())
+    @State private var reviewTargetForDashboard: DayRecord? = nil
 
     private let red   = Color(red: 0.96, green: 0.36, blue: 0.36)
     private let blue  = Color(red: 0.27, green: 0.62, blue: 0.83)
@@ -75,6 +76,42 @@ struct DashboardView: View {
     private var isSelectedDayToday: Bool { Calendar.current.isDateInToday(selectedDay) }
 
     private var selectedDayRecord: DayRecord? { dayStore.record(for: selectedDay) }
+
+    private var selectedDayCommitmentText: String? {
+        if let t = selectedDayRecord?.commitmentText, !t.isEmpty { return t }
+        if isSelectedDayToday, !settings.todayCommitment.isEmpty { return settings.todayCommitment }
+        return nil
+    }
+
+    @ViewBuilder
+    private var selectedDayFulfillmentBadge: some View {
+        if let rec = selectedDayRecord, (rec.commitmentText?.isEmpty == false) {
+            switch rec.commitmentFulfilled {
+            case .some(true):
+                commitmentBadge(label: "Done", icon: "checkmark.seal.fill", color: green)
+            case .some(false):
+                commitmentBadge(label: "Missed", icon: "xmark.seal.fill", color: red)
+            case .none:
+                if !isSelectedDayToday {
+                    Button { reviewTargetForDashboard = rec } label: {
+                        commitmentBadge(label: "Review", icon: "questionmark.circle.fill",
+                                        color: Color.orange)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func commitmentBadge(label: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 9))
+            Text(label).font(.system(size: 9, weight: .semibold))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.15)))
+    }
 
     private var selectedDayFocusSessions: [WorkSession] {
         let cal = Calendar.current
@@ -162,6 +199,17 @@ struct DashboardView: View {
                 sessionStore: sessionStore, problemStore: problemStore
             )
         }
+        .sheet(item: $reviewTargetForDashboard) { day in
+            CommitmentReviewView(
+                dayStore: dayStore,
+                day: day,
+                isShowing: Binding(
+                    get: { reviewTargetForDashboard != nil },
+                    set: { if !$0 { reviewTargetForDashboard = nil } }
+                )
+            )
+            .frame(width: 360, height: 320)
+        }
     }
 
     // MARK: - Left: Selected day's log
@@ -194,12 +242,16 @@ struct DashboardView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 }
-                if isSelectedDayToday, !settings.todayCommitment.isEmpty {
-                    Text("\u{201C}\(settings.todayCommitment)\u{201D}")
-                        .font(.system(size: 10).italic())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .padding(.top, 2)
+                if let commitText = selectedDayCommitmentText {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("\u{201C}\(commitText)\u{201D}")
+                            .font(.system(size: 10).italic())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer(minLength: 4)
+                        selectedDayFulfillmentBadge
+                    }
+                    .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 14)
@@ -965,12 +1017,24 @@ struct DashboardView: View {
         let delta = sessionStore.last7DaysMinutes - sessionStore.prior7DaysMinutes
         let hasPrior = sessionStore.prior7DaysMinutes > 0
 
+        let tally7 = dayStore.commitmentTally(lastDays: 7)
+        let committedDays7 = tally7.fulfilled + tally7.missed + tally7.unreviewed
+        let streak = dayStore.commitmentStreak
+
         return VStack(alignment: .leading, spacing: 8) {
             sectionLabel("INSIGHTS")
             VStack(spacing: 6) {
                 let consistency = sessionStore.consistencyScore(days: 14)
                 iRow("Consistency (14d)", "\(Int(consistency * 100))%",
                      color: consistency >= 0.8 ? .green : consistency >= 0.5 ? .orange : .red)
+                if committedDays7 > 0 {
+                    iRow("Promises kept (7d)",
+                         "\(tally7.fulfilled)/\(committedDays7)",
+                         color: tally7.fulfilled == committedDays7 ? .green :
+                                tally7.fulfilled * 2 >= committedDays7 ? .orange : .red)
+                    iRow("Commitment streak", "\(streak)d",
+                         color: streak >= 3 ? .green : .primary)
+                }
                 iRow("Avg session",  fmtMins(sessionStore.averageSessionMinutes(last: 20)))
                 iRow("Best day",     fmtMins(sessionStore.bestDayMinutes))
                 iRow("Best week",    fmtHours(sessionStore.bestWeekMinutes / 60.0))

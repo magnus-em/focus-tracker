@@ -7,6 +7,7 @@ struct TimerView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var dayStore: DayStore
     @Binding var showCommitment: Bool
+    @Binding var reviewTarget: DayRecord?
 
     @State private var showBreakPicker = false
     @State private var customBreakMinutes: Double = 30
@@ -271,7 +272,7 @@ struct TimerView: View {
 
             glassChipGroup {
                 HStack(spacing: 6) {
-                    ForEach([30.0, 60.0, 120.0], id: \.self) { mins in
+                    ForEach([10.0, 15.0, 30.0, 60.0, 120.0, 180.0], id: \.self) { mins in
                         let label = mins < 60 ? "\(Int(mins))m" : "\(Int(mins / 60))h"
                         Button(label) {
                             startBreak(minutes: mins)
@@ -292,10 +293,13 @@ struct TimerView: View {
                 } label: {
                     Image(systemName: "minus")
                         .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 26, height: 24)
+                        .frame(width: 30, height: 26)
+                        .contentShape(Rectangle())
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.12)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.22), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
-                .glassChip(in: RoundedRectangle(cornerRadius: 6))
+                .keyboardShortcut(.downArrow, modifiers: [])
 
                 Text("\(Int(customBreakMinutes)) min")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -306,10 +310,13 @@ struct TimerView: View {
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 26, height: 24)
+                        .frame(width: 30, height: 26)
+                        .contentShape(Rectangle())
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.12)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.22), lineWidth: 0.5))
                 }
                 .buttonStyle(.plain)
-                .glassChip(in: RoundedRectangle(cornerRadius: 6))
+                .keyboardShortcut(.upArrow, modifiers: [])
 
                 Spacer()
 
@@ -327,6 +334,13 @@ struct TimerView: View {
         .padding(.horizontal, 4)
     }
 
+    // `.glassEffect(.interactive(), in: Circle())` applied as a modifier on
+    // Button on macOS Tahoe can intermittently swallow clicks because the
+    // glass-overlay hit region overlaps but doesn't equal the Button's. The
+    // fix is to make the Button's hit region explicit with `.contentShape`
+    // and ensure it covers the full 48x48 frame, not just the inscribed
+    // circle. Symptom of the bug: pressing play does *nothing* —
+    // timer.start() never runs, no checkpoint is written, no state pushed.
     @ViewBuilder
     private func controlPrimaryButton(systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
         if #available(macOS 26.0, *) {
@@ -335,6 +349,7 @@ struct TimerView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive().tint(tint), in: Circle())
@@ -346,6 +361,7 @@ struct TimerView: View {
                     .frame(width: 48, height: 48)
                     .background(tint)
                     .clipShape(Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
@@ -358,6 +374,7 @@ struct TimerView: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: Circle())
@@ -369,6 +386,7 @@ struct TimerView: View {
                     .frame(width: 34, height: 34)
                     .background(Color.secondary.opacity(0.08))
                     .clipShape(Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(help)
@@ -377,63 +395,32 @@ struct TimerView: View {
 
     @ViewBuilder
     private var dayStatusRow: some View {
-        Group {
-            if dayStore.isDayEnded {
-                HStack(spacing: 4) {
-                    Image(systemName: "moon.fill")
+        HStack {
+            if let start = dayStore.todayRecord?.dayStart {
+                HStack(spacing: 3) {
+                    Image(systemName: "sunrise.fill")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
-                    Text("Day ended")
+                    Text("Since \(clockStr(start))")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
-                    Spacer()
-                }
-            } else if dayStore.isDayStarted {
-                HStack {
-                    if let start = dayStore.todayRecord?.dayStart {
-                        HStack(spacing: 3) {
-                            Image(systemName: "sunrise.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
-                            Text("Since \(clockStr(start))")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    Spacer()
-                    Button("End Day") { dayStore.endDay() }
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .glassChip()
-                        .buttonStyle(.plain)
-                }
-            } else {
-                HStack {
-                    Spacer()
-                    Button {
-                        dayStore.startDay()
-                        if settings.commitmentEnabled && settings.needsCommitmentToday {
-                            showCommitment = true
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "sunrise.fill")
-                                .font(.system(size: 10))
-                            Text("Start Day")
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                        .foregroundStyle(phaseColor)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 5)
-                        .background(phaseColor.opacity(0.1))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
                 }
             }
+            Spacer()
+            Button("End Day") {
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
+                    dayStore.endDay()
+                }
+                if dayStore.todayCommitmentNeedsReview, let r = dayStore.todayRecord {
+                    reviewTarget = r
+                }
+            }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .glassChip()
+                .buttonStyle(.plain)
         }
         .padding(.bottom, 4)
     }
