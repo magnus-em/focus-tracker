@@ -71,6 +71,11 @@ EOF
 XCBUILD_DD="/tmp/FocusDerivedData"
 PROFILE="$XCBUILD_DD/Build/Products/Debug/Focus.app/Contents/embedded.provisionprofile"
 if [ ! -f "$PROFILE" ] || [ Focus.entitlements -nt "$PROFILE" ]; then
+    # Focus.xcodeproj is gitignored; a fresh clone has to generate it.
+    if [ ! -d Focus.xcodeproj ]; then
+        echo "Generating Focus.xcodeproj via xcodegen..."
+        xcodegen generate --spec project.yml >/dev/null
+    fi
     echo "Regenerating provisioning profile via xcodebuild..."
     rm -rf "$XCBUILD_DD"
     xcodebuild -project Focus.xcodeproj -scheme Focus -configuration Debug \

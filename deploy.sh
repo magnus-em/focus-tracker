@@ -26,24 +26,20 @@ for old in /Applications/LockIn.app /Applications/FocusTimer.app; do
     fi
 done
 
-SESSIONS_FILE="$HOME/Library/Application Support/Focus/sessions.json"
-BACKUP="/tmp/focus_sessions_backup_$(date +%Y%m%d_%H%M%S).json"
+# Sessions live in the SwiftData store (sessions.json was retired in the SwiftData migration).
+STORE="$HOME/Library/Application Support/default.store"
+BACKUP="$HOME/Library/Application Support/Focus/default.store.pre-deploy-$(date +%Y%m%d_%H%M%S)"
+count_sessions() { sqlite3 -readonly "$1" "select count(*) from ZSTOREDWORKSESSION" 2>/dev/null || echo "?"; }
 
 echo "── Pre-install ──────────────────────────────"
 
-if [ -f "$SESSIONS_FILE" ]; then
-    SESSION_COUNT=$(python3 -c "
-import json
-try:
-    d = json.load(open('$SESSIONS_FILE'))
-    print(len(d) if isinstance(d, list) else len(d.get('sessions', [])))
-except Exception as e:
-    print('?')
-")
-    cp "$SESSIONS_FILE" "$BACKUP"
+if [ -f "$STORE" ]; then
+    SESSION_COUNT=$(count_sessions "$STORE")
+    # .backup folds the WAL in, unlike a plain cp of the .store file.
+    sqlite3 "$STORE" ".backup '$BACKUP'"
     echo "Sessions: $SESSION_COUNT  (backup → $BACKUP)"
 else
-    echo "No sessions file yet"
+    echo "No SwiftData store yet"
     SESSION_COUNT=0
 fi
 
@@ -72,22 +68,14 @@ cp -R "$APP" /Applications/
 "$LSREGISTER" -u "$APP" 2>/dev/null || true
 
 echo "── Verifying ────────────────────────────────"
-if [ -f "$SESSIONS_FILE" ]; then
-    SESSION_COUNT_AFTER=$(python3 -c "
-import json
-try:
-    d = json.load(open('$SESSIONS_FILE'))
-    print(len(d) if isinstance(d, list) else len(d.get('sessions', [])))
-except Exception as e:
-    print('?')
-")
+if [ -f "$STORE" ]; then
+    SESSION_COUNT_AFTER=$(count_sessions "$STORE")
     echo "Sessions after: $SESSION_COUNT_AFTER"
-    if [ "$SESSION_COUNT_AFTER" = "?" ] && [ "$SESSION_COUNT" != "0" ]; then
-        echo "WARNING: sessions.json unreadable — restoring backup"
-        cp "$BACKUP" "$SESSIONS_FILE"
+    if [ "$SESSION_COUNT_AFTER" != "$SESSION_COUNT" ]; then
+        echo "WARNING: session count changed ($SESSION_COUNT → $SESSION_COUNT_AFTER). Backup at $BACKUP"
     fi
 else
-    echo "No sessions file (expected if first run)"
+    echo "No SwiftData store (expected if first run)"
 fi
 
 echo "── Launching ────────────────────────────────"
