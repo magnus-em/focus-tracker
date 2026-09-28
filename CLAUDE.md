@@ -131,10 +131,11 @@ Requires admin password on first setup. Sets up sudoers entry + helper script. M
 - [x] In-session duration adjustment
 - [x] Spaced-repetition review queue for problems
 - [x] 18-week heatmap
+- [x] In-progress focus session in dashboard log
+- [x] Material-based glass pass (`GlassEffects.swift`)
 
 ### In flight (see HANDOFF.md)
-- [ ] Show in-progress focus session in dashboard log
-- [ ] Liquid Glass design pass — explore options first, present 2–3 directions
+- [ ] Adopt native Liquid Glass APIs (`glassEffect`, `.buttonStyle(.glass)`) now that Xcode 26 is installed — see HANDOFF.md
 
 ### Future ideas (not started)
 - Multi-day visual timeline (horizontal blocks for past days)
