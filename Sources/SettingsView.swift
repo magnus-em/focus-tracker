@@ -75,6 +75,7 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     }
+                    SyncHealthRows()
                     Text("Container: \(FocusModelContainer.cloudKitContainerID)")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.tertiary)
@@ -504,9 +505,8 @@ struct SettingsView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success:
-                    cloudStatus = "Working ✓"
+                    cloudStatus = "iCloud account reachable"
                     cloudStatusColor = .green
-                    cloudDetail = "Sync is healthy. Changes propagate automatically."
                 case .failure(let err):
                     if let ck = err as? CKError {
                         let serverMessage = ck.userInfo["ServerErrorDescription"] as? String ?? ""
@@ -535,6 +535,62 @@ struct SettingsView: View {
 }
 
 // MARK: - Subviews
+
+/// Health of the actual CloudKit mirror (from its event stream) plus the
+/// latest local backup. Separate from the account probe above, which can
+/// pass while the mirror is failing.
+struct SyncHealthRows: View {
+    @ObservedObject private var monitor = CloudSyncMonitor.shared
+
+    var body: some View {
+        let s = monitor.snapshot
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(title).font(.system(size: 11, weight: .medium))
+            }
+            row("Last download", s.lastImport)
+            row("Last upload", s.lastExport)
+            if monitor.health == .failing, let msg = s.lastErrorMessage {
+                Text(msg)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            row("Last backup", StoreBackup.latest?.date)
+        }
+        .padding(.top, 2)
+    }
+
+    private var title: String {
+        switch monitor.health {
+        case .healthy: return "Syncing"
+        case .stale: return "No download in 3+ days"
+        case .failing: return "Sync failing"
+        case .unknown: return "Waiting for first sync…"
+        }
+    }
+
+    private var color: Color {
+        switch monitor.health {
+        case .healthy: return .green
+        case .stale: return .orange
+        case .failing: return .red
+        case .unknown: return .secondary
+        }
+    }
+
+    private func row(_ label: String, _ date: Date?) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Text(date.map { $0.formatted(.relative(presentation: .named)) } ?? "never")
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+    }
+}
 
 private struct SectionLabel: View {
     let text: String

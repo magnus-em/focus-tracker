@@ -66,6 +66,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 
 ### Storage paths
 - `~/Library/Application Support/default.store` — SwiftData (SQLite) store for sessions, day records, problems, scratch, practice/mastery, timer state. Mirrored to CloudKit. Count sessions: `sqlite3 -readonly ~/Library/Application\ Support/default.store 'select count(*) from ZSTOREDWORKSESSION'`
+- `~/Library/Application Support/Focus/backups/default-YYYY-MM-DD.store` — daily single-file snapshots (`FocusCore/StoreBackup.swift`), 14 kept. Restore = quit app, copy over `default.store`, delete its `-wal`/`-shm`.
 - The old `*.json` files were migrated in May 2026 and survive only as `*.pre-swiftdata.bak`. `zetamac.json` and `sync.log` in `~/Library/Application Support/Focus/` are still live.
 - `~/Library/Application Support/Focus/oaths/YYYY-MM-DD.m4a`
 - UserDefaults `com.magnus.focus` (settings, commitment timestamp, timer crash checkpoint)
@@ -133,6 +134,8 @@ Requires admin password on first setup. Sets up sudoers entry + helper script. M
 - [x] 18-week heatmap
 - [x] In-progress focus session in dashboard log
 - [x] Material-based glass pass (`GlassEffects.swift`)
+- [x] CloudKit mirror health (`FocusCore/CloudSyncMonitor.swift`) in Settings + popover warning when failing/stale
+- [x] Daily store backups
 
 ### In flight (see HANDOFF.md)
 - [ ] Adopt native Liquid Glass APIs (`glassEffect`, `.buttonStyle(.glass)`) now that Xcode 26 is installed — see HANDOFF.md

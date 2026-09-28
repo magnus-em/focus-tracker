@@ -8,6 +8,7 @@ struct TimerView: View {
     @ObservedObject var dayStore: DayStore
     @Binding var showCommitment: Bool
     @Binding var reviewTarget: DayRecord?
+    @ObservedObject private var syncMonitor = CloudSyncMonitor.shared
 
     @State private var showBreakPicker = false
     @State private var customBreakMinutes: Double = 30
@@ -23,6 +24,15 @@ struct TimerView: View {
     var body: some View {
         VStack(spacing: 10) {
             dayStatusRow
+
+            if syncMonitor.health == .failing || syncMonitor.health == .stale {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.icloud").font(.system(size: 9))
+                    Text(syncMonitor.health == .failing ? "iCloud sync failing — see Settings" : "iCloud hasn't synced in 3+ days")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundStyle(.orange)
+            }
 
             Text(timer.currentPhase.displayName.uppercased())
                 .font(.system(size: 11, weight: .bold, design: .rounded))

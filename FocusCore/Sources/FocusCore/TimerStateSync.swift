@@ -35,6 +35,8 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
 
     private var remoteChangeObserver: NSObjectProtocol?
     private var dedupWorkItem: DispatchWorkItem?
+    /// checkForRemote polls every couple of seconds; log "empty" only on transition.
+    private var lastCheckWasEmpty = false
 
     public init(container: ModelContainer) {
         self.container = container
@@ -170,9 +172,11 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
 
     private func checkForRemote() {
         guard let state = currentState() else {
-            SyncLog.event("ckCheckEmpty")
+            if !lastCheckWasEmpty { SyncLog.event("ckCheckEmpty") }
+            lastCheckWasEmpty = true
             return
         }
+        lastCheckWasEmpty = false
         // Own-writes that come back via CloudKit echo: just update the
         // high-water mark and skip — but DON'T skip on version equality
         // alone, because a peer could have authored a state with the same

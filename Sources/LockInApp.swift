@@ -74,7 +74,16 @@ struct FocusApp: App {
     @StateObject private var zetamacController: ZetamacWindowController
 
     init() {
+        // Must observe before focusContainer (lazy) starts mirroring, or the setup event is missed.
+        CloudSyncMonitor.shared.start()
         runOneShotMigration()
+        StoreBackup.runDailyIfNeeded(container: focusContainer)
+        // Menu-bar apps can stay open for days; re-check so each day still gets a backup.
+        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
+            DispatchQueue.global(qos: .utility).async {
+                StoreBackup.runDailyIfNeeded(container: focusContainer)
+            }
+        }
 
         let store = SessionStore(container: focusContainer)
         let appSettings = AppSettings()
