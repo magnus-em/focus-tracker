@@ -43,6 +43,19 @@ enum PracticeQuotes {
         return pool[abs(seed) % pool.count]
     }
 
+    /// Day-stable quote: returns the same quote for the same context all
+    /// day, then rotates at midnight. Use this everywhere a quote is
+    /// shown — the old per-problem / per-elapsed-second seeds churned
+    /// quotes too aggressively (every tab switch, every zone transition,
+    /// every solve clock-tick produced a new one).
+    static func daily(_ context: Context) -> Quote {
+        let cal = Calendar.current
+        let now = Date()
+        let day = cal.ordinality(of: .day, in: .year, for: now) ?? 0
+        let year = cal.component(.year, from: now)
+        return pick(context, seed: year * 400 + day)
+    }
+
     private static func pool(for context: Context) -> [Quote] {
         switch context {
         case .general:         return general

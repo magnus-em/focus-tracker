@@ -4,6 +4,39 @@ import SwiftData
 import SwiftUI
 import Combine
 
+/// Two distinct ways a practice attempt can be entered. The mode is set
+/// when the attempt starts and drives which finish methods are available
+/// and what the UI surfaces (AI/hints/answer reveal in familiarization;
+/// strict "got it cold / didn't" in review).
+enum PracticeMode: String, Codable {
+    /// First exposure. AI assist, hints, answer reveal allowed. Always
+    /// results in scheduling R1 in 24h regardless of how it ended.
+    case familiarization
+    /// Cold attempt at a scheduled review rung. No inline help; outcomes
+    /// are pass / fail / skip. Advances or drops the ladder rung.
+    case review
+}
+
+/// Snapshot of an in-progress attempt — captured to UserDefaults so the
+/// user can close the window, quit the app, even reboot, and come back
+/// to the same problem at the same elapsed time. On restore the attempt
+/// always comes back paused: the wall clock advanced while the app was
+/// gone but the user wasn't actually working, so we don't credit that
+/// time. They click Resume to keep going.
+private struct PracticeSnapshot: Codable {
+    let catalogID: String
+    let mode: PracticeMode
+    /// Total active seconds when the snapshot was taken.
+    let elapsedSeconds: TimeInterval
+    let hintsPeeked: Int
+    let monteCarloUsed: Bool
+    /// If non-empty, the user was inside a review session. Restore puts
+    /// them back at this position in the queue.
+    let reviewQueueCatalogIDs: [String]
+    let reviewQueueIndex: Int
+    let savedAt: Date
+}
+
 /// Engine for "Practice Mode" — the Stat-110-style problem pacing tracker.
 ///
 /// One instance per Mac process. Holds a single active attempt at a time;
@@ -80,6 +113,22 @@ final class PracticeStore: ObservableObject {
     /// All completed attempts, newest-first. For the analytics panel.
     @Published private(set) var attempts: [StoredDrillAttempt] = []
 
+    /// Whether the active attempt is a fresh familiarization (AI/hints OK,
+    /// answer reveal allowed) or a strict cold review (no inline help, just
+    /// "got it cold / didn't").
+    @Published private(set) var currentMode: PracticeMode = .familiarization
+
+    /// Queue of catalog problems for the current review session, if any.
+    /// Set by `startReviewSession(_:)`; consumed by `advanceReviewQueue()`
+    /// as the user works through it. Empty when not in a review session.
+    @Published private(set) var reviewQueue: [Stat110Problem] = []
+    @Published private(set) var reviewQueueIndex: Int = 0
+
+    var isInReviewSession: Bool { !reviewQueue.isEmpty }
+    var reviewQueueRemaining: Int {
+        max(0, reviewQueue.count - reviewQueueIndex)
+    }
+
     // MARK: - Computed
 
     var zone: Zone {
@@ -107,6 +156,7 @@ final class PracticeStore: ObservableObject {
 
     private let context: ModelContext
     private weak var homeworkStore: HomeworkStore?
+    private weak var masteryStore: MasteryStore?
     private var ticker: AnyCancellable?
     private var resumeTime: Date?
     private var accumulatedBeforePause: TimeInterval = 0
@@ -115,12 +165,103 @@ final class PracticeStore: ObservableObject {
         self.context = ModelContext(container)
         self.homeworkStore = homeworkStore
         refresh()
+        // Restore any in-progress attempt left by a previous launch /
+        // window close. The store is constructed at app launch (the
+        // PracticeWindowController doesn't exist yet), so the moment the
+        // user opens the Practice window they see the same problem at
+        // the same elapsed seconds, paused.
+        restoreSnapshotIfAvailable()
+    }
+
+    // MARK: - Snapshot persistence
+
+    private static let snapshotKey = "practice.activeSnapshot"
+    /// Hard cap on snapshot age. Older than this and we assume the user
+    /// has moved on; we discard rather than ambushing them with stale
+    /// state. Cognitive-science research aside, a week-old "in progress"
+    /// attempt isn't really in progress.
+    private static let snapshotMaxAge: TimeInterval = 7 * 86_400
+
+    /// Save counter — we don't write every tick (every 0.5s) because
+    /// that'd thrash UserDefaults; we write every N ticks for the
+    /// periodic checkpoint. Direct triggers (start, pause, peek, finish)
+    /// still write immediately.
+    private var ticksSinceLastSave: Int = 0
+
+    private func saveSnapshot() {
+        guard isActive, let p = activeProblem else { return }
+        // Always snapshot the current accumulated elapsed time. If the
+        // user is mid-run we add the still-ticking interval up to now.
+        let elapsedNow: TimeInterval = {
+            if !isPaused, let r = resumeTime {
+                return accumulatedBeforePause + Date().timeIntervalSince(r)
+            }
+            return accumulatedBeforePause
+        }()
+        let snap = PracticeSnapshot(
+            catalogID: p.id,
+            mode: currentMode,
+            elapsedSeconds: elapsedNow,
+            hintsPeeked: hintsPeeked,
+            monteCarloUsed: monteCarloUsed,
+            reviewQueueCatalogIDs: reviewQueue.map(\.id),
+            reviewQueueIndex: reviewQueueIndex,
+            savedAt: Date()
+        )
+        if let data = try? JSONEncoder().encode(snap) {
+            UserDefaults.standard.set(data, forKey: Self.snapshotKey)
+        }
+    }
+
+    private func clearSnapshot() {
+        UserDefaults.standard.removeObject(forKey: Self.snapshotKey)
+    }
+
+    private func restoreSnapshotIfAvailable() {
+        guard let data = UserDefaults.standard.data(forKey: Self.snapshotKey),
+              let snap = try? JSONDecoder().decode(PracticeSnapshot.self, from: data) else {
+            return
+        }
+        // Staleness check — drop snapshots older than a week.
+        if Date().timeIntervalSince(snap.savedAt) > Self.snapshotMaxAge {
+            clearSnapshot()
+            return
+        }
+        guard let problem = Stat110Catalog.problem(id: snap.catalogID) else {
+            // Catalog drift — problem no longer exists. Drop the snapshot.
+            clearSnapshot()
+            return
+        }
+        // Rehydrate the review queue if there was one.
+        let queue: [Stat110Problem] = snap.reviewQueueCatalogIDs
+            .compactMap { Stat110Catalog.problem(id: $0) }
+
+        // Restore state directly (don't go through `start(...)` because
+        // that would reset elapsed to 0).
+        activeProblem = problem
+        currentMode = snap.mode
+        accumulatedBeforePause = snap.elapsedSeconds
+        elapsedSeconds = snap.elapsedSeconds
+        hintsPeeked = snap.hintsPeeked
+        monteCarloUsed = snap.monteCarloUsed
+        reviewQueue = queue
+        reviewQueueIndex = min(snap.reviewQueueIndex, max(0, queue.count - 1))
+        // Always come back paused — the wall clock advanced while the
+        // app was gone but the user wasn't working. They click Resume.
+        isPaused = true
+        resumeTime = nil
+        isActive = true
+        // Ticker stays off; resume() will start it.
     }
 
     /// Wire up the HomeworkStore after init. The App's init constructs
     /// both stores at the same time so we can't pass it inline.
     func attach(homeworkStore: HomeworkStore) {
         self.homeworkStore = homeworkStore
+    }
+
+    func attach(masteryStore: MasteryStore) {
+        self.masteryStore = masteryStore
     }
 
     private func refresh() {
@@ -131,9 +272,42 @@ final class PracticeStore: ObservableObject {
         attempts = (try? context.fetch(descriptor)) ?? []
     }
 
+    /// Nuke all past drill attempts and homework rows. Used for the
+    /// "reset history" button on the idle screen. Doesn't touch any
+    /// other stores (sessions, day records, problems entries, scratch
+    /// items remain). The destination is "as if the user never used
+    /// practice mode before."
+    func clearAllPracticeData() {
+        if isActive { discardActive() }
+
+        let attemptDescriptor = FetchDescriptor<StoredDrillAttempt>()
+        if let rows = try? context.fetch(attemptDescriptor) {
+            for r in rows { context.delete(r) }
+        }
+        let homeworkDescriptor = FetchDescriptor<StoredHomework>()
+        if let rows = try? context.fetch(homeworkDescriptor) {
+            for r in rows { context.delete(r) }
+        }
+        // Mastery ladder records + per-attempt mastery log. PracticeStore
+        // owns its own ModelContext so we delete from that context and
+        // tell MasteryStore (which uses a different context) to re-fetch.
+        let masteryDescriptor = FetchDescriptor<StoredMasteryRecord>()
+        if let rows = try? context.fetch(masteryDescriptor) {
+            for r in rows { context.delete(r) }
+        }
+        let masteryAttemptDescriptor = FetchDescriptor<StoredMasteryAttempt>()
+        if let rows = try? context.fetch(masteryAttemptDescriptor) {
+            for r in rows { context.delete(r) }
+        }
+        try? context.save()
+        refresh()
+        homeworkStore?.refreshFromExternal()
+        masteryStore?.refreshFromExternal()
+    }
+
     // MARK: - Controls
 
-    func start(problem: Stat110Problem) {
+    func start(problem: Stat110Problem, mode: PracticeMode = .familiarization) {
         guard !isActive else { return }
         activeProblem = problem
         elapsedSeconds = 0
@@ -143,7 +317,38 @@ final class PracticeStore: ObservableObject {
         monteCarloUsed = false
         isPaused = false
         isActive = true
+        currentMode = mode
         startTicker()
+        saveSnapshot()
+    }
+
+    /// Begin a review session: queue up the (already-interleaved) problems
+    /// and open the first one in review mode. `advanceReviewQueue()` moves
+    /// to the next problem after each completion.
+    func startReviewSession(_ problems: [Stat110Problem]) {
+        guard !problems.isEmpty else { return }
+        reviewQueue = problems
+        reviewQueueIndex = 0
+        if isActive { discardActive() }
+        start(problem: problems[0], mode: .review)
+    }
+
+    /// Move to the next problem in the review queue, or end the session
+    /// if we've worked through all of them. Called by every review-mode
+    /// outcome handler after the current attempt is logged.
+    func advanceReviewQueue() {
+        reviewQueueIndex += 1
+        if reviewQueueIndex < reviewQueue.count {
+            start(problem: reviewQueue[reviewQueueIndex], mode: .review)
+        } else {
+            endReviewSession()
+        }
+    }
+
+    func endReviewSession() {
+        reviewQueue = []
+        reviewQueueIndex = 0
+        currentMode = .familiarization
     }
 
     func pause() {
@@ -153,6 +358,7 @@ final class PracticeStore: ObservableObject {
         resumeTime = nil
         isPaused = true
         ticker?.cancel(); ticker = nil
+        saveSnapshot()
     }
 
     func resume() {
@@ -160,6 +366,7 @@ final class PracticeStore: ObservableObject {
         resumeTime = Date()
         isPaused = false
         startTicker()
+        saveSnapshot()
     }
 
     private func startTicker() {
@@ -171,83 +378,136 @@ final class PracticeStore: ObservableObject {
                     self.elapsedSeconds = self.accumulatedBeforePause
                         + Date().timeIntervalSince(r)
                 }
+                // Periodic checkpoint every ~30s while running so a crash
+                // or hard quit doesn't lose more than half a minute of
+                // elapsed time. Direct triggers (pause, hint, etc.) still
+                // write immediately for sub-second freshness on the
+                // important transitions.
+                self.ticksSinceLastSave += 1
+                if self.ticksSinceLastSave >= 60 {  // 60 × 0.5s = 30s
+                    self.ticksSinceLastSave = 0
+                    self.saveSnapshot()
+                }
             }
     }
 
     func peekHint() {
         guard isActive else { return }
         hintsPeeked += 1
+        saveSnapshot()
     }
 
     func markMonteCarlo() {
         guard isActive else { return }
         monteCarloUsed = true
+        saveSnapshot()
     }
 
-    // MARK: - Finish (three outcome paths, each syncing to homework when relevant)
+    // MARK: - Finish — routed through the mastery ladder
+    //
+    // The mode the attempt was launched in determines which mastery
+    // method we call. Familiarization-mode finishes always set the
+    // record to .familiarized (with R1 due in 24h). Review-mode finishes
+    // advance or drop the ladder rung. We still write the legacy
+    // StoredDrillAttempt rows so the audit-log surfaces (dashboard, stats)
+    // keep working without further refactoring.
 
-    /// Solved — log attempt + upsert homework row with chosen confidence.
-    /// needsReview is left to the caller; default in the UI is true for
-    /// Shaky/Struggled, false for Got-it.
-    func finishSolved(confidence: Confidence,
-                      difficulty: ProblemDifficulty,
-                      needsReview: Bool,
-                      notes: String) {
-        guard isActive else { return }
-        let elapsed = freezeElapsed()
-        persistAttempt(outcome: .solved, notes: notes,
-                       confidenceInt: intFor(confidence),
-                       elapsed: elapsed)
-        if let p = activeProblem {
-            homeworkStore?.upsertFromPractice(
-                catalogID: p.id,
-                title: p.title,
-                source: p.sourceLabel,
-                difficulty: difficulty,
-                confidence: confidence,
-                needsReview: needsReview,
-                notes: notes,
-                url: Stat110Catalog.problemSet(number: p.setNumber)?.pdfURL ?? "",
-                solveMinutes: Int(elapsed / 60)
-            )
-        }
-        resetActive()
-        refresh()
-    }
-
-    /// Stuck — used hints/MC and still couldn't crack it. Mark homework
-    /// row as struggled + needsReview so it bubbles up tomorrow.
+    /// Couldn't solve this attempt — even with AI. Logs time; stage stays
+    /// where it is, nextDue is nudged out a day so it doesn't loop back
+    /// instantly.
     func finishStuck(notes: String) {
         guard isActive else { return }
         let elapsed = freezeElapsed()
         persistAttempt(outcome: .stuck, notes: notes,
                        confidenceInt: intFor(.struggled), elapsed: elapsed)
         if let p = activeProblem {
-            homeworkStore?.upsertFromPractice(
-                catalogID: p.id,
-                title: p.title,
-                source: p.sourceLabel,
-                difficulty: .hard,
-                confidence: .struggled,
-                needsReview: true,
-                notes: notes,
-                url: Stat110Catalog.problemSet(number: p.setNumber)?.pdfURL ?? "",
-                solveMinutes: Int(elapsed / 60)
-            )
+            masteryStore?.recordReviewFail(problem: p,
+                                           durationSeconds: elapsed,
+                                           notes: notes)
         }
+        let wasInReviewSession = isInReviewSession
         resetActive()
         refresh()
+        if wasInReviewSession { advanceReviewQueue() }
     }
 
-    /// Skipped — bailed early without engaging. Log attempt only; don't
-    /// pollute the homework list with this.
+    /// Manually pin the active problem to a specific ladder stage.
+    /// Logs the in-progress time spent against the audit log so the
+    /// per-problem history still credits the work.
+    func setStageManually(_ stage: MasteryStage) {
+        guard isActive, let p = activeProblem else { return }
+        let elapsed = freezeElapsed()
+        if elapsed > 0 {
+            persistAttempt(outcome: .skipped, notes: "Manual stage set",
+                           confidenceInt: 0, elapsed: elapsed)
+        }
+        masteryStore?.setStage(problem: p, stage: stage)
+        let wasInReviewSession = isInReviewSession
+        resetActive()
+        refresh()
+        if wasInReviewSession { advanceReviewQueue() }
+    }
+
+    /// Remove the active problem from the ladder entirely (for when you
+    /// shelve something you've decided not to study).
+    func removeFromLadder() {
+        guard isActive, let p = activeProblem else { return }
+        masteryStore?.resetLadder(problem: p)
+        discardActive()
+    }
+
+    /// Solved this attempt. Advances the ladder one rung iff `usedAI` is
+    /// false. With AI, logs the attempt and anchors a fresh problem at R1
+    /// but doesn't promote anything that was already on the ladder.
+    func finishSolved(usedAI: Bool, notes: String) {
+        guard isActive else { return }
+        let elapsed = freezeElapsed()
+        persistAttempt(outcome: usedAI ? .aiWalkthrough : .solved,
+                       notes: notes,
+                       confidenceInt: intFor(usedAI ? .shaky : .solid),
+                       elapsed: elapsed)
+        if let p = activeProblem {
+            masteryStore?.recordReviewPass(problem: p,
+                                           usedAI: usedAI,
+                                           durationSeconds: elapsed,
+                                           notes: notes)
+        }
+        let wasInReviewSession = isInReviewSession
+        resetActive()
+        refresh()
+        if wasInReviewSession { advanceReviewQueue() }
+    }
+
+    /// Mark the active problem as fully retained, bypassing the review
+    /// ladder entirely. For when the user already knows the material cold
+    /// and doesn't need spaced repetition on it.
+    func markAsRetained(notes: String = "") {
+        guard isActive else { return }
+        let elapsed = freezeElapsed()
+        persistAttempt(outcome: .solved, notes: notes,
+                       confidenceInt: intFor(.solid), elapsed: elapsed)
+        if let p = activeProblem {
+            masteryStore?.skipToRetained(problem: p,
+                                         durationSeconds: elapsed,
+                                         notes: notes)
+        }
+        let wasInReviewSession = isInReviewSession
+        resetActive()
+        refresh()
+        if wasInReviewSession { advanceReviewQueue() }
+    }
+
+    /// Skipped — bailed early without engaging. No mastery-state change.
+    /// In review mode, also advances the queue.
     func finishSkipped(notes: String) {
         guard isActive else { return }
         let elapsed = freezeElapsed()
         persistAttempt(outcome: .skipped, notes: notes,
                        confidenceInt: 0, elapsed: elapsed)
+        let wasInReviewSession = isInReviewSession
         resetActive()
         refresh()
+        if wasInReviewSession { advanceReviewQueue() }
     }
 
     private func freezeElapsed() -> TimeInterval {
@@ -291,7 +551,12 @@ final class PracticeStore: ObservableObject {
 
     func discardActive() {
         guard isActive else { return }
+        // Discarding from a review session aborts the whole session — the
+        // user can re-start later. Doesn't drop ladder rungs for problems
+        // already completed in this session, just stops queueing more.
+        let wasInReviewSession = isInReviewSession
         resetActive()
+        if wasInReviewSession { endReviewSession() }
     }
 
     // MARK: - Catalog navigation
@@ -356,6 +621,12 @@ final class PracticeStore: ObservableObject {
         hintsPeeked = 0
         monteCarloUsed = false
         activeProblem = nil
+        ticksSinceLastSave = 0
+        // Clear the persisted in-progress snapshot. resetActive runs at
+        // the end of every finish*/discard path, so this is the single
+        // gate that guarantees no stale snapshot survives a logged
+        // attempt. (Mid-session transitions like `start` re-save it.)
+        clearSnapshot()
     }
 
     // MARK: - Analytics

@@ -171,6 +171,8 @@ public final class StoredDayRecord {
     public var calendarDay: Date = Date()
     public var dayStart: Date? = nil
     public var dayEnd: Date? = nil
+    public var commitmentText: String? = nil
+    public var commitmentFulfilled: Bool? = nil
 
     public init() {}
 
@@ -180,10 +182,13 @@ public final class StoredDayRecord {
         self.calendarDay = value.calendarDay
         self.dayStart = value.dayStart
         self.dayEnd = value.dayEnd
+        self.commitmentText = value.commitmentText
+        self.commitmentFulfilled = value.commitmentFulfilled
     }
 
     public var asValue: DayRecord {
-        DayRecord(id: id, calendarDay: calendarDay, dayStart: dayStart, dayEnd: dayEnd)
+        DayRecord(id: id, calendarDay: calendarDay, dayStart: dayStart, dayEnd: dayEnd,
+                  commitmentText: commitmentText, commitmentFulfilled: commitmentFulfilled)
     }
 }
 
@@ -312,8 +317,11 @@ public final class StoredDrillAttempt {
 }
 
 public enum DrillOutcome: String, Sendable, CaseIterable {
-    /// Problem fully worked through.
+    /// Problem fully worked through under own power.
     case solved
+    /// Walked through with AI assistance — got to the answer, but didn't
+    /// own the derivation. Needs a cold solo redo on a scheduled date.
+    case aiWalkthrough = "ai_walkthrough"
     /// Used hints / MC and still couldn't crack it. Defer for later.
     case stuck
     /// Bailed early without hints — usually means topic was wrong.
@@ -321,10 +329,120 @@ public enum DrillOutcome: String, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
-        case .solved:  return "Solved"
-        case .stuck:   return "Stuck"
-        case .skipped: return "Skipped"
+        case .solved:         return "Solved"
+        case .aiWalkthrough:  return "AI walkthrough"
+        case .stuck:          return "Stuck"
+        case .skipped:        return "Skipped"
         }
+    }
+}
+
+// MARK: - Mastery ladder
+//
+// New source of truth for what the user owns cold vs. what still needs
+// review. Replaces the coarser confidence-based scheme on HomeworkProblem.
+// Each catalog problem the user has touched has at most one MasteryRecord,
+// plus a flat per-attempt audit log (StoredMasteryAttempt).
+//
+// The ladder is documented in the design proposal; in short:
+//   familiarized  → R1 in 24h
+//   r1Passed      → R2 in 2 or 3 days (per the "felt easy?" prompt)
+//   r2Passed      → R3 in 7 days
+//   retained      → no more reviews
+//   lapsed        → failed a cold attempt; must re-familiarize before retry
+
+public enum MasteryStage: String, Sendable, CaseIterable {
+    /// Session 0 done (with or without AI). Next test is R1 in 24h.
+    case familiarized
+    /// R1 cold-passed. Next test is R2 in 2–3 days.
+    case r1Passed
+    /// R2 cold-passed. Next test is R3 in 7 days.
+    case r2Passed
+    /// R3 cold-passed. Drops out of the active review queue.
+    case retained
+    /// A cold attempt failed. Needs a fresh familiarization session
+    /// before re-entering the ladder.
+    case lapsed
+}
+
+public enum MasteryAttemptMode: String, Sendable {
+    case familiarization
+    case review
+}
+
+public enum MasteryAttemptOutcome: String, Sendable {
+    /// Familiarization mode finished with AI assistance.
+    case aiAssist
+    /// Familiarization mode finished without AI.
+    case soloFamiliarize
+    /// Review mode — cold solve worked.
+    case coldPass
+    /// Review mode — couldn't get there cold.
+    case coldFail
+    /// User bailed without engaging.
+    case skipped
+}
+
+@Model
+public final class StoredMasteryRecord {
+    /// Catalog ID is the natural primary key. SwiftData treats this as
+    /// "stable identity for upsert" via our manual look-up — we don't
+    /// declare it @Attribute(.unique) because that requires migration
+    /// coordination and we already do explicit upserts in MasteryStore.
+    public var catalogID: String = ""
+    public var stageRaw: String = MasteryStage.familiarized.rawValue
+    /// When the most recent attempt happened. nextDue is derived from
+    /// (lastEvent, stage, r2IntervalDays).
+    public var lastEvent: Date = Date()
+    /// When the next review test should happen. Nil for `retained` and
+    /// `lapsed` (lapsed records leave the queue until a fresh familiarization).
+    public var nextDue: Date? = nil
+    /// Captured at R1 pass. 2 if the user said "felt hard," 3 if "felt easy."
+    public var r2IntervalDays: Int = 2
+    /// Cached for the dashboard so we don't have to round-trip the catalog.
+    public var problemTitle: String = ""
+    public var sourceLabel: String = ""
+    public var topic: String? = nil
+    /// Set number for grouping in the dashboard (so we don't lean on title parsing).
+    public var setNumber: Int = 0
+    /// Running counters for at-a-glance stats; full log lives in StoredMasteryAttempt.
+    public var familiarizationCount: Int = 0
+    public var coldPassCount: Int = 0
+    public var coldFailCount: Int = 0
+
+    public init() {}
+
+    public var stage: MasteryStage {
+        get { MasteryStage(rawValue: stageRaw) ?? .familiarized }
+        set { stageRaw = newValue.rawValue }
+    }
+
+    public var isDue: Bool {
+        guard let due = nextDue else { return false }
+        return due <= Date()
+    }
+}
+
+@Model
+public final class StoredMasteryAttempt {
+    public var catalogID: String = ""
+    public var date: Date = Date()
+    public var modeRaw: String = MasteryAttemptMode.familiarization.rawValue
+    public var outcomeRaw: String = MasteryAttemptOutcome.soloFamiliarize.rawValue
+    public var durationSeconds: Double = 0
+    public var notes: String = ""
+    /// Only meaningful on R1 cold-pass attempts. Drives the R2 interval.
+    public var feltEasy: Bool? = nil
+
+    public init() {}
+
+    public var mode: MasteryAttemptMode {
+        get { MasteryAttemptMode(rawValue: modeRaw) ?? .familiarization }
+        set { modeRaw = newValue.rawValue }
+    }
+    public var outcome: MasteryAttemptOutcome {
+        get { MasteryAttemptOutcome(rawValue: outcomeRaw) ?? .soloFamiliarize }
+        set { outcomeRaw = newValue.rawValue }
     }
 }
 
@@ -339,5 +457,7 @@ public enum FocusSchema {
         StoredScratchItem.self,
         StoredTimerState.self,
         StoredDrillAttempt.self,
+        StoredMasteryRecord.self,
+        StoredMasteryAttempt.self,
     ]
 }

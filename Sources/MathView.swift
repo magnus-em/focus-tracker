@@ -13,6 +13,17 @@ import AppKit
 /// The KaTeX bundle is shipped in `Sources/Resources/katex/`. Loaded
 /// once via WKWebView and auto-render scans the document for `$...$` and
 /// `$$...$$` delimiters.
+/// WKWebView subclass that forwards scroll-wheel events up to the
+/// enclosing SwiftUI ScrollView. Without this, mousing over a math
+/// block inside a long scroll trapped the scroll inside the WebView
+/// (which has nothing to scroll, since we size it to its content) and
+/// the outer page wouldn't move.
+final class ScrollPassingWKWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 struct MathView: NSViewRepresentable {
     let content: String
     var fontSize: CGFloat = 14
@@ -30,8 +41,21 @@ struct MathView: NSViewRepresentable {
         // Allow loading the KaTeX assets from the app bundle. Without this
         // bundle-relative URLs (the font @font-face entries) won't resolve.
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // CRITICAL: by default WKWebView treats each file:// URL as its own
+        // origin, so a `loadHTMLString(_:, baseURL: file://.../katex/x.html)`
+        // page cannot fetch its sibling `katex.min.js` / `katex.min.css`
+        // due to same-origin policy. Without these two flags, KaTeX's
+        // auto-render script never executes and all $...$ / $$...$$ blocks
+        // render as literal source. Private prefs, but stable for years.
+        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        config.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
+        // Bridge for the JS side to report content height back to Swift
+        // *after* KaTeX has actually rendered (and after fonts settle).
+        // Without this, height is read at didFinish — before auto-render —
+        // and math content gets clipped to the unrendered text height.
+        config.userContentController.add(context.coordinator, name: "heightChange")
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = ScrollPassingWKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")    // transparent — sits over SwiftUI bg
         webView.allowsBackForwardNavigationGestures = false
@@ -40,23 +64,71 @@ struct MathView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         let isDark = darkMode ?? (NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        // Always refresh the parent reference so the height callback
+        // posts back to the *current* SwiftUI closure (which lives in
+        // a fresh struct on every re-render).
+        context.coordinator.parent = self
         let html = Self.makeHTML(content: content, fontSize: fontSize, dark: isDark)
-        // Bundle.module is the SPM-generated bundle that contains
-        // anything declared in `resources:` of the Package.swift target.
-        let katexDir = Bundle.module.url(forResource: "katex", withExtension: nil)
-            ?? Bundle.main.url(forResource: "katex", withExtension: nil)
-        guard let dir = katexDir else {
+        // Skip reload if the HTML hasn't actually changed. SwiftUI calls
+        // updateNSView whenever the parent re-evaluates — and because
+        // AutoSizingMathView reports height into a @State that drives a
+        // frame() change, this fires on every height tick. Without this
+        // guard each height report restarted the WebView, which restarted
+        // KaTeX, and content with long bodies never finished settling
+        // (so $...$ stayed as raw text on screen).
+        let signature = html.hashValue
+        if context.coordinator.lastHTMLHash == signature { return }
+        context.coordinator.lastHTMLHash = signature
+
+        // The previous approach used `loadHTMLString(_:baseURL:)` with a
+        // file:// baseURL. That works for *navigation* but modern WKWebView
+        // still treats the resulting page as a unique origin and blocks
+        // fetches of sibling CSS/JS — so KaTeX's auto-render script never
+        // loaded, and all $...$ rendered as literal source.
+        //
+        // The robust fix is `loadFileURL(_:allowingReadAccessTo:)`. That
+        // requires a real on-disk HTML file plus a directory the WebView
+        // is granted read access to. The bundle is read-only, so we copy
+        // KaTeX into a writable temp dir once per app launch and write
+        // the HTML file alongside it.
+        guard let writableDir = Self.writableKatexDir else {
             webView.loadHTMLString(html, baseURL: nil)
             return
         }
-        // baseURL must be the katex directory so the font @font-face URLs
-        // (which are relative — `fonts/KaTeX_Main-Regular.woff2`) resolve.
-        // Also allow reads of the whole katex/ tree (incl. fonts/).
-        webView.loadHTMLString(html, baseURL: dir.appendingPathComponent("placeholder.html"))
-        // Read access — needed for WKWebView to load the local CSS/JS/fonts.
-        _ = dir  // (loadFileURL would let us set allowingReadAccessTo, but loadHTMLString + baseURL works for local file:// URLs as long as the resource is below baseURL)
-        context.coordinator.parent = self
+        let htmlName = "render-\(ObjectIdentifier(context.coordinator).hashValue).html"
+        let htmlFile = writableDir.appendingPathComponent(htmlName)
+        do {
+            try html.write(to: htmlFile, atomically: true, encoding: .utf8)
+            webView.loadFileURL(htmlFile, allowingReadAccessTo: writableDir)
+        } catch {
+            webView.loadHTMLString(html, baseURL: nil)
+        }
     }
+
+    /// Shared writable copy of the KaTeX bundle assets. SPM resources live
+    /// inside the app bundle which is read-only on signed builds, and
+    /// `loadFileURL(_:allowingReadAccessTo:)` needs both the HTML file
+    /// and the assets reachable under one writable root. So we copy once
+    /// per launch into `NSTemporaryDirectory()/focus-katex-<pid>/` and
+    /// reuse for every MathView render.
+    private static let writableKatexDir: URL? = {
+        guard let bundled = Bundle.module.url(forResource: "katex", withExtension: nil)
+                ?? Bundle.main.url(forResource: "katex", withExtension: nil) else {
+            return nil
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("focus-katex-\(pid)", isDirectory: true)
+        // Best-effort wipe — previous run's dir (same pid is rare, but
+        // defend against it). Then copy the whole katex/ tree.
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try FileManager.default.copyItem(at: bundled, to: dest)
+            return dest
+        } catch {
+            return nil
+        }
+    }()
 
     /// Assemble the HTML page: KaTeX CSS, the user content as markdown-
     /// flavored body, and the KaTeX auto-render script that scans for
@@ -104,6 +176,17 @@ struct MathView: NSViewRepresentable {
         <script src="katex.min.js"></script>
         <script src="auto-render.min.js"></script>
         <script>
+          function reportHeight() {
+            try {
+              var h = Math.max(document.body.scrollHeight,
+                               document.documentElement.scrollHeight,
+                               document.body.offsetHeight,
+                               document.documentElement.offsetHeight);
+              if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.heightChange) {
+                window.webkit.messageHandlers.heightChange.postMessage(h);
+              }
+            } catch (e) {}
+          }
           document.addEventListener("DOMContentLoaded", function() {
             renderMathInElement(document.body, {
               delimiters: [
@@ -112,6 +195,23 @@ struct MathView: NSViewRepresentable {
               ],
               throwOnError: false
             });
+            // Initial post — KaTeX inline glyphs are already laid out.
+            reportHeight();
+            // Re-post once KaTeX webfonts have finished loading (display
+            // math gets taller once fonts swap in).
+            if (document.fonts && document.fonts.ready) {
+              document.fonts.ready.then(reportHeight);
+            }
+            // Safety re-measures for late layout settling.
+            setTimeout(reportHeight, 80);
+            setTimeout(reportHeight, 320);
+            setTimeout(reportHeight, 800);
+            // NB: deliberately NOT using a ResizeObserver here. The
+            // SwiftUI side sets our frame in response to height reports,
+            // which triggers a reflow, which triggers another resize,
+            // which oscillates forever. The fixed setTimeouts above
+            // are enough to catch font-swap-driven height changes
+            // without feeding back into our own frame updates.
           });
         </script>
         </body>
@@ -164,17 +264,30 @@ struct MathView: NSViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: MathView
+        var lastHTMLHash: Int = 0
         init(_ parent: MathView) { self.parent = parent }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // Report content height back to SwiftUI so the parent can
-            // size the view to its content.
+            // didFinish fires before KaTeX renders, so don't size from
+            // here — the JS bridge posts the real height once layout
+            // settles. We keep this around in case the bridge fails to
+            // attach (e.g. plain text with no math): fall back to the
+            // raw DOM height so the view doesn't collapse to zero.
             webView.evaluateJavaScript("document.body.scrollHeight") { [weak self] result, _ in
-                if let h = result as? CGFloat {
-                    self?.parent.onHeightChange?(h)
-                }
+                guard let self = self else { return }
+                if let h = result as? CGFloat { self.parent.onHeightChange?(h) }
+                else if let n = result as? NSNumber { self.parent.onHeightChange?(CGFloat(n.doubleValue)) }
+            }
+        }
+
+        func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "heightChange" else { return }
+            if let h = message.body as? CGFloat {
+                parent.onHeightChange?(h)
+            } else if let n = message.body as? NSNumber {
+                parent.onHeightChange?(CGFloat(n.doubleValue))
             }
         }
     }
@@ -191,7 +304,14 @@ struct AutoSizingMathView: View {
     var body: some View {
         MathView(content: content, fontSize: fontSize) { h in
             // Pad slightly to avoid scroll bars on borderline cases.
-            self.height = h + 4
+            let target = h + 4
+            // Deadband — only commit if the new height differs meaningfully.
+            // Without this, subpixel jitter from font-fallback layout would
+            // shake the parent layout (you'd see chars / parens visibly
+            // flicker as the frame oscillates by fractions of a point).
+            if abs(target - self.height) > 1.0 {
+                self.height = target
+            }
         }
         .frame(height: height)
     }

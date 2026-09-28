@@ -12,6 +12,13 @@ class HomeworkStore: ObservableObject {
         refresh()
     }
 
+    /// Public hook so other stores can ask us to re-fetch after they
+    /// mutate the underlying SwiftData container from their own context
+    /// (e.g. `PracticeStore.clearAllPracticeData()` deletes homework
+    /// rows from its context — our `items` array would be stale until
+    /// we re-fetch).
+    func refreshFromExternal() { refresh() }
+
     private func refresh() {
         var descriptor = FetchDescriptor<StoredHomework>(
             sortBy: [SortDescriptor(\.date)]
@@ -69,7 +76,9 @@ class HomeworkStore: ObservableObject {
                             needsReview: Bool,
                             notes: String,
                             url: String,
-                            solveMinutes: Int?) -> HomeworkProblem {
+                            solveMinutes: Int?,
+                            usedAI: Bool? = nil,
+                            reviewOverrideDate: Date? = nil) -> HomeworkProblem {
         // Look up by catalogID first (the canonical identity for catalog
         // problems). Manual entries with no catalogID never upsert —
         // they always create a fresh row.
@@ -82,12 +91,17 @@ class HomeworkStore: ObservableObject {
                 source: source,
                 difficulty: difficulty,
                 confidence: confidence,
-                usedAI: existing.usedAI,
+                // usedAI ratchets up — once you've used AI on a problem, the
+                // row stays flagged so the dashboard can show "did this with AI"
+                // forever (until the user manually clears it).
+                usedAI: (usedAI ?? false) || existing.usedAI,
                 notes: mergedNotes(existing.notes, notes),
                 url: url.isEmpty ? existing.url : url,
                 catalogID: catID,
                 needsReview: needsReview,
-                reviewOverrideDate: existing.reviewOverrideDate
+                // Caller-provided override wins; otherwise preserve any
+                // existing user-set override.
+                reviewOverrideDate: reviewOverrideDate ?? existing.reviewOverrideDate
             )
             update(updated)
             return updated
@@ -97,12 +111,12 @@ class HomeworkStore: ObservableObject {
             source: source,
             difficulty: difficulty,
             confidence: confidence,
-            usedAI: false,
+            usedAI: usedAI ?? false,
             notes: notes,
             url: url,
             catalogID: catalogID,
             needsReview: needsReview,
-            reviewOverrideDate: nil
+            reviewOverrideDate: reviewOverrideDate
         )
         add(entry)
         return entry

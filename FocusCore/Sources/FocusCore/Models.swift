@@ -297,17 +297,22 @@ public struct DayRecord: Codable, Identifiable, Sendable {
     public let calendarDay: Date
     public var dayStart: Date?
     public var dayEnd: Date?
+    public var commitmentText: String?
+    public var commitmentFulfilled: Bool?
 
     public init() {
         self.id = UUID()
         self.calendarDay = Calendar.current.startOfDay(for: Date())
     }
 
-    public init(id: UUID, calendarDay: Date, dayStart: Date? = nil, dayEnd: Date? = nil) {
+    public init(id: UUID, calendarDay: Date, dayStart: Date? = nil, dayEnd: Date? = nil,
+                commitmentText: String? = nil, commitmentFulfilled: Bool? = nil) {
         self.id = id
         self.calendarDay = calendarDay
         self.dayStart = dayStart
         self.dayEnd = dayEnd
+        self.commitmentText = commitmentText
+        self.commitmentFulfilled = commitmentFulfilled
     }
 }
 
