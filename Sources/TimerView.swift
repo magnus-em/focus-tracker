@@ -381,7 +381,7 @@ struct TimerView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 22, height: 22)
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.glass(.clear))
             .buttonBorderShape(.circle)
             .help(help)
         } else {

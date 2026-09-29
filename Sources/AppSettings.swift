@@ -168,6 +168,12 @@ class AppSettings: ObservableObject {
         interviewDate = epoch > 0 ? Date(timeIntervalSince1970: epoch) : nil
         hasCompletedOnboarding = d.bool(forKey: "hasCompletedOnboarding")
 
+        if !d.bool(forKey: "didAddHWChoresTags") {
+            for t in ["HW", "Chores"] where !tags.contains(t) { tags.append(t) }
+            sd.set(tags, forKey: "tags")
+            d.set(true, forKey: "didAddHWChoresTags")
+        }
+
         if tags.contains("AI/ML") {
             tags = tags.map { $0 == "AI/ML" ? "AI" : $0 }
             sd.set(tags, forKey: "tags")

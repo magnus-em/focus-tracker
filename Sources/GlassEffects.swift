@@ -18,17 +18,32 @@ struct WindowTransparencyConfigurator: NSViewRepresentable {
                 sub.wantsLayer = true
                 sub.layer?.backgroundColor = NSColor.clear.cgColor
             }
+            // The MenuBarExtra panel ships its own NSVisualEffectView; left in place it
+            // frosts the desktop before our clear glass ever sees it.
+            if let frame = window.contentView?.superview { Self.hideVibrancy(in: frame, sparing: view) }
         }
         return view
     }
     func updateNSView(_ nsView: NSView, context: Context) {}
+
+    // Only hides blur views that don't contain our own content, so a panel whose
+    // content lives inside its NSVisualEffectView is left alone.
+    private static func hideVibrancy(in root: NSView, sparing ours: NSView) {
+        for sub in root.subviews {
+            if let fx = sub as? NSVisualEffectView, !ours.isDescendant(of: fx) {
+                fx.isHidden = true
+                continue
+            }
+            hideVibrancy(in: sub, sparing: ours)
+        }
+    }
 }
 
 extension View {
     @ViewBuilder
     func glassCard<S: InsettableShape>(in shape: S) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: shape)
+            self.glassEffect(.clear, in: shape)
         } else {
             self
                 .background(shape.fill(.thinMaterial))
@@ -65,7 +80,7 @@ extension View {
     @ViewBuilder
     func glassChip(in shape: some InsettableShape = Capsule(), selected: Bool = false, tint: Color = .accentColor) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(selected ? .regular.tint(tint.opacity(0.3)).interactive() : .regular.interactive(), in: shape)
+            self.glassEffect(selected ? .clear.tint(tint.opacity(0.35)).interactive() : .clear.interactive(), in: shape)
         } else {
             self.background(shape.fill(selected ? AnyShapeStyle(tint.opacity(0.15)) : AnyShapeStyle(.thinMaterial)))
         }
@@ -77,7 +92,7 @@ extension View {
     func glassTabChip(selected: Bool, tint: Color = Color.accentColor) -> some View {
         if selected {
             if #available(macOS 26.0, *) {
-                self.glassEffect(.regular.interactive().tint(tint), in: Capsule())
+                self.glassEffect(.clear.interactive().tint(tint.opacity(0.5)), in: Capsule())
             } else {
                 self.background(Capsule().fill(tint.opacity(0.12)))
             }

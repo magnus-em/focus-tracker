@@ -1290,6 +1290,8 @@ struct DashboardView: View {
         case "quant": return blue
         case "swe":   return green
         case "ai", "ai/ml": return Color(red: 0.65, green: 0.4, blue: 0.9)
+        case "hw":    return amber
+        case "chores": return Color(red: 0.62, green: 0.58, blue: 0.52)
         default:      return Color(red: 0.30, green: 0.78, blue: 0.74)
         }
     }

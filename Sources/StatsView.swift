@@ -15,6 +15,8 @@ struct StatsView: View {
         switch tag.lowercased() {
         case "quant": return quantColor
         case "swe":   return sweColor
+        case "hw":    return Color(red: 0.98, green: 0.70, blue: 0.18)
+        case "chores": return Color(red: 0.62, green: 0.58, blue: 0.52)
         default:      return otherColor
         }
     }
