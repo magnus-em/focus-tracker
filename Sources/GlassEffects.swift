@@ -40,13 +40,13 @@ extension View {
         glassCard(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
-    // Full-popover background: real Liquid Glass on macOS 26, material on older.
+    // Clear (Maps-style) glass so the desktop itself is what refracts through the popover.
     @ViewBuilder
     func popoverBackground() -> some View {
         if #available(macOS 26.0, *) {
             self
                 .background(WindowTransparencyConfigurator().frame(width: 0, height: 0))
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         } else {
             self.background(.regularMaterial)
         }

@@ -251,12 +251,6 @@ struct PopoverContent: View {
     var body: some View {
         popoverBody
             .frame(width: 300)
-            .background {
-                AmbientBackdrop(colors: backdropColors, intensity: timerManager.isRunning ? 0.75 : 0.55,
-                                speed: timerManager.isRunning ? 0.25 : 0.12)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .allowsHitTesting(false)
-            }
             .popoverBackground()
             .onAppear {
                 // Force "today"-scoped views to re-evaluate every time the
@@ -293,13 +287,7 @@ struct PopoverContent: View {
             }
     }
 
-    private var backdropColors: [Color] {
-        timerManager.isOnBreak
-            ? [Color(red: 0.27, green: 0.62, blue: 0.83), Color(red: 0.25, green: 0.78, blue: 0.70), Color(red: 0.45, green: 0.40, blue: 0.95)]
-            : [Color(red: 0.96, green: 0.36, blue: 0.36), Color(red: 0.98, green: 0.62, blue: 0.20), Color(red: 0.80, green: 0.30, blue: 0.75)]
-    }
-
-        private var practiceElapsedShort: String {
+    private var practiceElapsedShort: String {
         let s = Int(practiceStore.elapsedSeconds)
         return String(format: "%02d:%02d", s / 60, s % 60)
     }

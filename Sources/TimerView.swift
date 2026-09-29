@@ -398,14 +398,14 @@ struct TimerView: View {
         }
     }
 
-    // A glass lens inside the ring so the ambient backdrop bends through the countdown.
+    // A clear lens inside the ring so the desktop bends through the countdown.
     @ViewBuilder
     private var ringLens: some View {
         if #available(macOS 26.0, *) {
             Circle()
                 .fill(.clear)
                 .frame(width: 124, height: 124)
-                .glassEffect(.regular.tint(phaseColor.opacity(timer.isRunning ? 0.18 : 0.08)), in: Circle())
+                .glassEffect(.clear.tint(phaseColor.opacity(timer.isRunning ? 0.14 : 0.06)), in: Circle())
         }
     }
 
