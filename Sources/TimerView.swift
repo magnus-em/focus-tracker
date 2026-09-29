@@ -405,7 +405,7 @@ struct TimerView: View {
             Circle()
                 .fill(.clear)
                 .frame(width: 124, height: 124)
-                .glassEffect(.clear.tint(phaseColor.opacity(timer.isRunning ? 0.14 : 0.06)), in: Circle())
+                .glassEffect(timer.isRunning ? .clear.tint(phaseColor.opacity(0.10)) : .clear, in: Circle())
         }
     }
 

@@ -55,13 +55,20 @@ extension View {
         glassCard(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
-    // Clear (Maps-style) glass so the desktop itself is what refracts through the popover.
+    // No panel glass at all: the desktop shows straight through and only the
+    // cards/chips/controls are (clear) glass. A second glass layer under them
+    // is what made the popover read as frosted.
     @ViewBuilder
     func popoverBackground() -> some View {
         if #available(macOS 26.0, *) {
+            let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
             self
                 .background(WindowTransparencyConfigurator().frame(width: 0, height: 0))
-                .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(shape)
+                .overlay(shape.strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.08)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 0.75))
         } else {
             self.background(.regularMaterial)
         }
