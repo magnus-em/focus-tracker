@@ -46,6 +46,13 @@ class AppSettings: ObservableObject {
     @Published var todayCommitment: String {
         didSet { sd.set(todayCommitment, forKey: "todayCommitment") }
     }
+    @Published var commitmentReviewReminder: Bool {
+        didSet { sd.set(commitmentReviewReminder, forKey: "commitmentReviewReminder") }
+    }
+    /// Minutes after midnight for the end-of-day "did you do it?" notification.
+    @Published var commitmentReviewMinutes: Int {
+        didSet { sd.set(commitmentReviewMinutes, forKey: "commitmentReviewMinutes") }
+    }
     @Published var quantGoal: Int {
         didSet { sd.set(quantGoal, forKey: "quantGoal") }
     }
@@ -123,6 +130,8 @@ class AppSettings: ObservableObject {
             "pauseGraceMinutes": 10,
             "autoBreakEnabled": true,
             "commitmentEnabled": true,
+            "commitmentReviewReminder": true,
+            "commitmentReviewMinutes": 21 * 60,
             "quantGoal": 0,
             "quantWeeklyGoal": 0,
             "sweGoal": 0,
@@ -147,6 +156,8 @@ class AppSettings: ObservableObject {
         commitmentEnabled = d.bool(forKey: "commitmentEnabled")
         lastCommitmentDateEpoch = d.double(forKey: "lastCommitmentDateEpoch")
         todayCommitment = d.string(forKey: "todayCommitment") ?? ""
+        commitmentReviewReminder = d.bool(forKey: "commitmentReviewReminder")
+        commitmentReviewMinutes = d.integer(forKey: "commitmentReviewMinutes")
         quantGoal = d.integer(forKey: "quantGoal")
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")
@@ -187,6 +198,8 @@ class AppSettings: ObservableObject {
         commitmentEnabled = d.bool(forKey: "commitmentEnabled")
         lastCommitmentDateEpoch = d.double(forKey: "lastCommitmentDateEpoch")
         todayCommitment = d.string(forKey: "todayCommitment") ?? todayCommitment
+        commitmentReviewReminder = d.bool(forKey: "commitmentReviewReminder")
+        commitmentReviewMinutes = d.integer(forKey: "commitmentReviewMinutes")
         quantGoal = d.integer(forKey: "quantGoal")
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")

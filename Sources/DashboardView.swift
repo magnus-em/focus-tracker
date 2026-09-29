@@ -92,13 +92,11 @@ struct DashboardView: View {
             case .some(false):
                 commitmentBadge(label: "Missed", icon: "xmark.seal.fill", color: red)
             case .none:
-                if !isSelectedDayToday {
-                    Button { reviewTargetForDashboard = rec } label: {
-                        commitmentBadge(label: "Review", icon: "questionmark.circle.fill",
-                                        color: Color.orange)
-                    }
-                    .buttonStyle(.plain)
+                Button { reviewTargetForDashboard = rec } label: {
+                    commitmentBadge(label: isSelectedDayToday ? "Check in" : "Review",
+                                    icon: "questionmark.circle.fill", color: Color.orange)
                 }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -191,6 +189,11 @@ struct DashboardView: View {
             Divider()
             rightPanel
         }
+        .background {
+            AmbientBackdrop(colors: [red, amber, blue], intensity: 0.35, speed: 0.06)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
         .glassChrome()
         .frame(minWidth: 640, minHeight: 440)
         .sheet(item: $editingEvent) { event in
@@ -198,6 +201,13 @@ struct DashboardView: View {
                 event: event, settings: settings,
                 sessionStore: sessionStore, problemStore: problemStore
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showCommitmentReview)) { note in
+            guard let id = note.object as? UUID,
+                  let rec = dayStore.records.first(where: { $0.id == id }),
+                  rec.commitmentFulfilled == nil else { return }
+            selectedDay = rec.calendarDay
+            reviewTargetForDashboard = rec
         }
         .sheet(item: $reviewTargetForDashboard) { day in
             CommitmentReviewView(
@@ -344,6 +354,7 @@ struct DashboardView: View {
                 homeworkHeatmapSection
                 narrativeInsightsSection
                 awardsSection
+                commitmentHistorySection
                 HStack(alignment: .top, spacing: 10) {
                     insightsSection
                     weakAreasSection
@@ -1049,6 +1060,141 @@ struct DashboardView: View {
         .padding(12)
         .glassCard(cornerRadius: 10)
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Commitment history
+
+    private var commitmentHistorySection: some View {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let committed = dayStore.committedDays
+        let reviewed = committed.filter { $0.commitmentFulfilled != nil }
+        let kept = reviewed.filter { $0.commitmentFulfilled == true }
+        let cutoff30 = cal.date(byAdding: .day, value: -29, to: today)!
+        let reviewed30 = reviewed.filter { $0.calendarDay >= cutoff30 }
+        let kept30 = reviewed30.filter { $0.commitmentFulfilled == true }
+
+        func focusHours(_ days: [DayRecord]) -> Double? {
+            guard !days.isEmpty else { return nil }
+            let total = days.reduce(0.0) { acc, r in
+                acc + sessionStore.workMinutes(since: r.calendarDay,
+                                               until: cal.date(byAdding: .day, value: 1, to: r.calendarDay)!)
+            }
+            return total / Double(days.count) / 60
+        }
+        let keptHours = focusHours(kept)
+        let missedHours = focusHours(reviewed.filter { $0.commitmentFulfilled == false })
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionLabel("COMMITMENTS")
+                Spacer()
+                if !reviewed.isEmpty {
+                    Text("\(kept.count)/\(reviewed.count) kept all-time")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            if committed.isEmpty {
+                Text("Write a commitment when you start your day; check in at night to build a record.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: 8) {
+                    commitmentStat("30-day",
+                                   reviewed30.isEmpty ? "—" : "\(Int((Double(kept30.count) / Double(reviewed30.count) * 100).rounded()))%",
+                                   sub: "\(kept30.count)/\(reviewed30.count) kept")
+                    commitmentStat("Streak", "\(dayStore.commitmentStreak)d", sub: "best \(dayStore.bestCommitmentStreak)d")
+                    commitmentStat("Focus when kept", keptHours.map { fmtHours($0) } ?? "—",
+                                   sub: missedHours.map { "vs \(fmtHours($0)) missed" } ?? "avg per day")
+                }
+
+                commitmentStrip(from: cutoff30, days: 30)
+
+                VStack(spacing: 4) {
+                    ForEach(committed.prefix(7)) { rec in
+                        commitmentHistoryRow(rec)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .glassCard(cornerRadius: 10)
+    }
+
+    private func commitmentStat(_ label: String, _ value: String, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(.tertiary)
+            Text(value)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+            Text(sub)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func commitmentStrip(from start: Date, days: Int) -> some View {
+        let cal = Calendar.current
+        return HStack(spacing: 3) {
+            ForEach(0..<days, id: \.self) { i in
+                let day = cal.date(byAdding: .day, value: i, to: start)!
+                let rec = dayStore.record(for: day)
+                let hasText = rec?.commitmentText?.isEmpty == false
+                let color: Color = !hasText ? Color.secondary.opacity(0.08)
+                    : rec?.commitmentFulfilled == true ? green
+                    : rec?.commitmentFulfilled == false ? red
+                    : Color.orange.opacity(0.5)
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                    .fill(color)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 14)
+                    .help(stripHelp(day: day, rec: rec))
+                    .onTapGesture { selectedDay = day }
+            }
+        }
+    }
+
+    private func stripHelp(day: Date, rec: DayRecord?) -> String {
+        let f = DateFormatter(); f.dateFormat = "EEE MMM d"
+        guard let text = rec?.commitmentText, !text.isEmpty else { return "\(f.string(from: day)) — no commitment" }
+        let outcome = rec?.commitmentFulfilled.map { $0 ? "Kept" : "Missed" } ?? "Not reviewed"
+        return "\(f.string(from: day)) — \(outcome)\n\(text)"
+    }
+
+    private func commitmentHistoryRow(_ rec: DayRecord) -> some View {
+        let f = DateFormatter(); f.dateFormat = "EEE d"
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(f.string(from: rec.calendarDay))
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 42, alignment: .leading)
+            Text(rec.commitmentText ?? "")
+                .font(.system(size: 11))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            switch rec.commitmentFulfilled {
+            case .some(true):
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(green).font(.system(size: 11))
+            case .some(false):
+                Image(systemName: "xmark.seal.fill").foregroundStyle(red).font(.system(size: 11))
+            case .none:
+                Button { reviewTargetForDashboard = rec } label: {
+                    Text(Calendar.current.isDateInToday(rec.calendarDay) ? "Check in" : "Review")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { selectedDay = rec.calendarDay }
     }
 
     // MARK: - Weak areas

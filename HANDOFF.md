@@ -2,7 +2,7 @@
 
 Short-lived notes between sessions. Durable architecture lives in `CLAUDE.md`. Trim aggressively as items land.
 
-Last touched: 2026-05-14.
+Last touched: 2026-09-27.
 
 ## In flight
 
@@ -10,13 +10,7 @@ _(nothing in flight right now)_
 
 ## Future / nice-to-have
 
-### Liquid Glass — true APIs once Xcode is updated
-Current pass uses `.thinMaterial` / `.regularMaterial` via `Sources/GlassEffects.swift` (`glassCard`, `glassChrome`). This works on macOS 14+ and the system renders these materials with the Liquid Glass aesthetic automatically on macOS 26.
-
-To adopt the real APIs (`glassEffect(in:)`, `GlassEffectContainer`, `.buttonStyle(.glass)`, `.buttonStyle(.glassProminent)`), bump to Xcode 17+ / macOS 26 SDK and update `GlassEffects.swift` to switch on `#available(macOS 26, *)`. Likely surfaces:
-- Tab picker → `TabView` with native glass tab bar.
-- Play button → `.buttonStyle(.glassProminent)`; stop/skip → `.buttonStyle(.glass)`.
-- Preset/category chips → wrap in `GlassEffectContainer` for morph/blend on selection.
+_(nothing queued)_
 
 ## Done in last session — already reflected in CLAUDE.md
 - Hours-based goal, day tracking, single break model, manual breaks, breaks-as-sessions, commitment-on-by-default, gutted CompletionPanel, removed flow decision, dashboard breaks in log, consistency + best-week metrics, sessions count demoted everywhere.

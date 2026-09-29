@@ -63,11 +63,11 @@ extension View {
     }
 
     @ViewBuilder
-    func glassChip(in shape: some InsettableShape = Capsule()) -> some View {
+    func glassChip(in shape: some InsettableShape = Capsule(), selected: Bool = false, tint: Color = .accentColor) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: shape)
+            self.glassEffect(selected ? .regular.tint(tint.opacity(0.3)).interactive() : .regular.interactive(), in: shape)
         } else {
-            self.background(shape.fill(.thinMaterial))
+            self.background(shape.fill(selected ? AnyShapeStyle(tint.opacity(0.15)) : AnyShapeStyle(.thinMaterial)))
         }
     }
 
@@ -93,5 +93,46 @@ func glassChipGroup<Content: View>(@ViewBuilder content: () -> Content) -> some 
         GlassEffectContainer { content() }
     } else {
         content()
+    }
+}
+
+/// Slow-drifting colour field that sits behind glass surfaces. Liquid Glass
+/// only reads as glass when there is something vivid behind it to refract;
+/// over a flat panel (or over other glass) it renders as a plain tint.
+struct AmbientBackdrop: View {
+    var colors: [Color]
+    var intensity: Double = 0.6
+    var speed: Double = 0.15
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if #available(macOS 15.0, *) {
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { ctx in
+                let t = ctx.date.timeIntervalSinceReferenceDate * speed
+                MeshGradient(width: 3, height: 3, points: Self.points(t), colors: meshColors)
+            }
+            .opacity(intensity)
+        } else {
+            LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                .opacity(intensity * 0.6)
+        }
+    }
+
+    private var meshColors: [Color] {
+        let c = colors.isEmpty ? [Color.accentColor] : colors
+        func at(_ i: Int) -> Color { c[i % c.count] }
+        let clear = Color.clear
+        return [at(0), clear, at(1),
+                clear, at(2), clear,
+                at(1), clear, at(0)]
+    }
+
+    private static func points(_ t: Double) -> [SIMD2<Float>] {
+        func w(_ phase: Double, _ amp: Double) -> Float { Float(sin(t + phase) * amp) }
+        return [
+            [0, 0], [0.5 + w(0, 0.25), 0], [1, 0],
+            [0, 0.5 + w(1.3, 0.25)], [0.5 + w(2.1, 0.22), 0.5 + w(0.7, 0.22)], [1, 0.5 + w(2.9, 0.25)],
+            [0, 1], [0.5 + w(3.7, 0.25), 1], [1, 1],
+        ]
     }
 }

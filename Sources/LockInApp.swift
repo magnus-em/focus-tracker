@@ -105,11 +105,14 @@ struct FocusApp: App {
         _sessionStore        = StateObject(wrappedValue: store)
         _settings            = StateObject(wrappedValue: appSettings)
         _timerManager        = StateObject(wrappedValue: timer)
-        _problemStore        = StateObject(wrappedValue: ProblemStore(container: focusContainer))
+        let problems = ProblemStore(container: focusContainer)
+        _problemStore        = StateObject(wrappedValue: problems)
         _homeworkStore       = StateObject(wrappedValue: homework)
         _scratchStore        = StateObject(wrappedValue: ScratchStore(container: focusContainer))
-        _dayStore            = StateObject(wrappedValue: DayStore(container: focusContainer))
-        _dashboardController = StateObject(wrappedValue: DashboardWindowController())
+        let days = DayStore(container: focusContainer)
+        let dashboard = DashboardWindowController()
+        _dayStore            = StateObject(wrappedValue: days)
+        _dashboardController = StateObject(wrappedValue: dashboard)
         let practice = PracticeStore(container: focusContainer, homeworkStore: homework)
         practice.attach(masteryStore: mastery)
         _practiceStore       = StateObject(wrappedValue: practice)
@@ -126,6 +129,11 @@ struct FocusApp: App {
         _onboardingController = StateObject(wrappedValue: onboarding)
 
         SiteBlocker.cleanupIfNeeded()
+
+        CommitmentReminder.shared.install(dayStore: days, settings: appSettings) {
+            dashboard.open(sessionStore: store, problemStore: problems, homeworkStore: homework,
+                           settings: appSettings, dayStore: days, timerManager: timer)
+        }
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification,
@@ -242,8 +250,13 @@ struct PopoverContent: View {
 
     var body: some View {
         popoverBody
-            .background(.clear)
             .frame(width: 300)
+            .background {
+                AmbientBackdrop(colors: backdropColors, intensity: timerManager.isRunning ? 0.75 : 0.55,
+                                speed: timerManager.isRunning ? 0.25 : 0.12)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .allowsHitTesting(false)
+            }
             .popoverBackground()
             .onAppear {
                 // Force "today"-scoped views to re-evaluate every time the
@@ -280,7 +293,13 @@ struct PopoverContent: View {
             }
     }
 
-    private var practiceElapsedShort: String {
+    private var backdropColors: [Color] {
+        timerManager.isOnBreak
+            ? [Color(red: 0.27, green: 0.62, blue: 0.83), Color(red: 0.25, green: 0.78, blue: 0.70), Color(red: 0.45, green: 0.40, blue: 0.95)]
+            : [Color(red: 0.96, green: 0.36, blue: 0.36), Color(red: 0.98, green: 0.62, blue: 0.20), Color(red: 0.80, green: 0.30, blue: 0.75)]
+    }
+
+        private var practiceElapsedShort: String {
         let s = Int(practiceStore.elapsedSeconds)
         return String(format: "%02d:%02d", s / 60, s % 60)
     }

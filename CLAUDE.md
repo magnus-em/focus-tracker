@@ -45,7 +45,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/TimerView.swift` | Main timer UI. Day status row (Start/End Day), phase label, category chips, presets, ring (outer = goal progress in hours, inner = session progress), controls, ±5/±10 adjustment, Take a Break button + sheet, today's stats footer. |
 | `Sources/CommitmentView.swift` | Daily commitment overlay (written text + optional voice oath). Triggered by Start Day. |
 | `Sources/StatsView.swift` | Popover stats tab. Today card, 7-day card, focus split, 18-week heatmap, lifetime row. |
-| `Sources/ProblemsView.swift` / `ProblemDetailView.swift` | Problem logging + review queue. |
+| `Sources/ProblemsView.swift` / `ProblemDetailView.swift` | Problem logging + review queue. SWE log sheet searches/browses `FocusCore/Grind75Catalog.swift` (8-week schedule) and prefills title/URL/difficulty/categories; progress matched by LeetCode URL slug, then title. |
 | `Sources/ScratchpadView.swift` | Quick checklist. |
 | `Sources/SettingsView.swift` | All settings UI. |
 | `Sources/BlockedSitesView.swift` | Domain list editor for site blocking. |
@@ -137,8 +137,11 @@ Requires admin password on first setup. Sets up sudoers entry + helper script. M
 - [x] CloudKit mirror health (`FocusCore/CloudSyncMonitor.swift`) in Settings + popover warning when failing/stale
 - [x] Daily store backups
 
+- [x] Native Liquid Glass on macOS 26 (`glassEffect`, `GlassEffectContainer`, `.buttonStyle(.glass/.glassProminent)` on timer controls, tinted glass on selected chips); material fallback on 14–15
+- [x] Grind 75 picker in Log Problem
+
 ### In flight (see HANDOFF.md)
-- [ ] Adopt native Liquid Glass APIs (`glassEffect`, `.buttonStyle(.glass)`) now that Xcode 26 is installed — see HANDOFF.md
+_(none)_
 
 ### Future ideas (not started)
 - Multi-day visual timeline (horizontal blocks for past days)
@@ -146,5 +149,4 @@ Requires admin password on first setup. Sets up sudoers entry + helper script. M
 - Weekly goal in addition to daily
 - Editable break sessions (set label like "Lunch", "Gym")
 - Notification quick-action to extend +5 min
-- iCloud sync for session history
 - Sound customization

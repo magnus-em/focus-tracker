@@ -794,7 +794,9 @@ struct LogProblemOverlay: View {
     @State private var title: String = ""
     @State private var urlText: String = ""
     @State private var selectedSource: String = ""
-    @State private var selectedDomain: ProblemDomain = .quant
+    @AppStorage("logProblemDomain") private var selectedDomain: ProblemDomain = .quant
+    @State private var pickedGrind: Grind75Problem? = nil
+    @State private var showGrindBrowser = false
     @State private var selectedCategories: Set<String> = []
     @State private var selectedDifficulty: ProblemDifficulty = .medium
     @State private var selectedSolveMinutes: Int? = nil
@@ -805,6 +807,29 @@ struct LogProblemOverlay: View {
     private let solveOptions: [(String, Int?)] = [
         ("—", nil), ("< 5m", 3), ("5–15m", 10), ("15–30m", 22), ("30m+", 45)
     ]
+
+    private var loggedGrindSlugs: Set<String> {
+        Set(store.problems.compactMap { Grind75Catalog.problem(matching: $0)?.slug })
+    }
+
+    private var grindSuggestions: [Grind75Problem] {
+        guard selectedDomain == .swe, pickedGrind == nil,
+              !title.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return Array(Grind75Catalog.search(title).prefix(6))
+    }
+
+    private func pickGrind(_ p: Grind75Problem) {
+        pickedGrind = p
+        title = p.title
+        urlText = p.url
+        selectedDifficulty = p.difficulty
+        selectedCategories = Set(p.categories)
+        if let lc = settings.problemSources.first(where: { $0.localizedCaseInsensitiveContains("leetcode") }) {
+            selectedSource = lc
+        }
+        showGrindBrowser = false
+        titleFocused = false
+    }
 
     private var canLog: Bool {
         let hasTitle = !title.trimmingCharacters(in: .whitespaces).isEmpty
@@ -840,6 +865,31 @@ struct LogProblemOverlay: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
 
+                        // Domain
+                        HStack(spacing: 8) {
+                            ForEach(ProblemDomain.allCases, id: \.self) { domain in
+                                let sel = selectedDomain == domain
+                                Button {
+                                    selectedDomain = domain
+                                    selectedCategories = []
+                                    pickedGrind = nil
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: domain.icon)
+                                            .font(.system(size: 11, weight: .semibold))
+                                        Text(domain.rawValue)
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .foregroundStyle(sel ? .white : domain.color)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .background(sel ? domain.color : domain.color.opacity(0.1))
+                                    .cornerRadius(9)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
                         // Title — required
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 4) {
@@ -851,7 +901,8 @@ struct LogProblemOverlay: View {
                                     .font(.system(size: 9, weight: .medium))
                                     .foregroundStyle(.tertiary)
                             }
-                            TextField("e.g. Two Sum, Coin Flip Variance", text: $title)
+                            TextField(selectedDomain == .swe ? "Search Grind 75 or type any name" : "e.g. Coin Flip Variance",
+                                      text: $title)
                                 .font(.system(size: 13, weight: .medium))
                                 .textFieldStyle(.plain)
                                 .focused($titleFocused)
@@ -859,7 +910,28 @@ struct LogProblemOverlay: View {
                                 .padding(.vertical, 8)
                                 .background(Color.secondary.opacity(0.07))
                                 .cornerRadius(8)
-                                .onSubmit { if canLog { logAndClose() } }
+                                .onSubmit {
+                                    if let top = grindSuggestions.first { pickGrind(top) }
+                                    else if canLog { logAndClose() }
+                                }
+                                .onChange(of: title) { _, new in
+                                    if let p = pickedGrind, new != p.title { pickedGrind = nil }
+                                }
+
+                            if !grindSuggestions.isEmpty {
+                                let done = loggedGrindSlugs
+                                VStack(spacing: 0) {
+                                    ForEach(grindSuggestions) { p in
+                                        Grind75Row(problem: p, done: done.contains(p.slug)) { pickGrind(p) }
+                                    }
+                                }
+                                .background(Color.secondary.opacity(0.05))
+                                .cornerRadius(8)
+                            }
+                        }
+
+                        if selectedDomain == .swe {
+                            grind75Section
                         }
 
                         // Source — required if sources configured
@@ -893,30 +965,6 @@ struct LogProblemOverlay: View {
                                         }
                                     }
                                 }
-                            }
-                        }
-
-                        // Domain
-                        HStack(spacing: 8) {
-                            ForEach(ProblemDomain.allCases, id: \.self) { domain in
-                                let sel = selectedDomain == domain
-                                Button {
-                                    selectedDomain = domain
-                                    selectedCategories = []
-                                } label: {
-                                    HStack(spacing: 5) {
-                                        Image(systemName: domain.icon)
-                                            .font(.system(size: 11, weight: .semibold))
-                                        Text(domain.rawValue)
-                                            .font(.system(size: 13, weight: .semibold))
-                                    }
-                                    .foregroundStyle(sel ? .white : domain.color)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 9)
-                                    .background(sel ? domain.color : domain.color.opacity(0.1))
-                                    .cornerRadius(9)
-                                }
-                                .buttonStyle(.plain)
                             }
                         }
 
@@ -1104,6 +1152,83 @@ struct LogProblemOverlay: View {
         .onAppear { titleFocused = true }
     }
 
+    @ViewBuilder
+    private var grind75Section: some View {
+        let done = loggedGrindSlugs
+        let next = Grind75Catalog.all.first { !done.contains($0.slug) }
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text("GRIND 75")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1)
+                    .foregroundStyle(.secondary)
+                Text("\(done.count)/\(Grind75Catalog.all.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ProblemDomain.swe.color)
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showGrindBrowser.toggle() }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(showGrindBrowser ? "Hide" : "Browse")
+                        Image(systemName: showGrindBrowser ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            ProgressView(value: Double(done.count), total: Double(Grind75Catalog.all.count))
+                .tint(ProblemDomain.swe.color)
+                .controlSize(.small)
+
+            if let next, pickedGrind == nil, !showGrindBrowser {
+                Button { pickGrind(next) } label: {
+                    HStack(spacing: 6) {
+                        Text("Next up")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                        Text(next.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text("W\(next.week)")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.07))
+                    .cornerRadius(7)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showGrindBrowser {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(1...Grind75Catalog.weekCount, id: \.self) { week in
+                        let items = Grind75Catalog.problems(inWeek: week)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("WEEK \(week) · \(items.filter { done.contains($0.slug) }.count)/\(items.count)")
+                                .font(.system(size: 9, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(.tertiary)
+                                .padding(.bottom, 3)
+                            ForEach(items) { p in
+                                Grind75Row(problem: p, done: done.contains(p.slug), showWeek: false) { pickGrind(p) }
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+                .background(Color.secondary.opacity(0.05))
+                .cornerRadius(8)
+            }
+        }
+    }
+
     private func logAndClose() {
         store.add(ProblemEntry(
             title: title.trimmingCharacters(in: .whitespaces),
@@ -1118,6 +1243,42 @@ struct LogProblemOverlay: View {
             solveMinutes: selectedSolveMinutes
         ))
         isShowing = false
+    }
+}
+
+private struct Grind75Row: View {
+    let problem: Grind75Problem
+    let done: Bool
+    var showWeek = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(problem.difficulty.color)
+                    .frame(width: 6, height: 6)
+                Text(problem.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(done ? .secondary : .primary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if showWeek {
+                    Text("W\(problem.week)")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                if done {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.green)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

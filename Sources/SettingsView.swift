@@ -21,6 +21,20 @@ struct SettingsView: View {
     @State private var manualLogged = false
     @State private var dedupResult: String = ""
 
+    private var reviewTimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(bySettingHour: settings.commitmentReviewMinutes / 60,
+                                      minute: settings.commitmentReviewMinutes % 60,
+                                      second: 0, of: Date()) ?? Date()
+            },
+            set: {
+                let c = Calendar.current.dateComponents([.hour, .minute], from: $0)
+                settings.commitmentReviewMinutes = (c.hour ?? 21) * 60 + (c.minute ?? 0)
+            }
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -95,6 +109,22 @@ struct SettingsView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                    ToggleRow(label: "Evening check-in", isOn: $settings.commitmentReviewReminder)
+                    if settings.commitmentReviewReminder {
+                        HStack {
+                            Text("Remind me at")
+                                .font(.system(size: 12, weight: .medium))
+                            Spacer()
+                            DatePicker("", selection: reviewTimeBinding, displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                                .datePickerStyle(.field)
+                                .fixedSize()
+                        }
+                        Text("A notification asks whether you kept today's commitment. Answer Yes/No right from the banner.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 Divider()

@@ -55,7 +55,7 @@ struct TimerView: View {
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 5)
                                     .foregroundStyle(selected ? phaseColor : Color.secondary)
-                                    .glassChip()
+                                    .glassChip(selected: selected, tint: phaseColor)
                                     .buttonStyle(.plain)
                             }
                         }
@@ -81,7 +81,7 @@ struct TimerView: View {
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 4)
                                 .foregroundStyle(selected ? phaseColor : Color.secondary)
-                                .glassChip()
+                                .glassChip(selected: selected, tint: phaseColor)
                                 .buttonStyle(.plain)
                         }
                     }
@@ -89,6 +89,7 @@ struct TimerView: View {
             }
 
             ZStack {
+                ringLens
                 Circle()
                     .stroke(phaseColor.opacity(0.12), lineWidth: 8)
                     .frame(width: 140, height: 140)
@@ -274,7 +275,7 @@ struct TimerView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .foregroundStyle(sel ? Color(red: 0.27, green: 0.62, blue: 0.83) : Color.secondary)
-                        .glassChip()
+                        .glassChip(selected: sel, tint: Color(red: 0.27, green: 0.62, blue: 0.83))
                         .buttonStyle(.plain)
                     }
                 }
@@ -344,25 +345,20 @@ struct TimerView: View {
         .padding(.horizontal, 4)
     }
 
-    // `.glassEffect(.interactive(), in: Circle())` applied as a modifier on
-    // Button on macOS Tahoe can intermittently swallow clicks because the
-    // glass-overlay hit region overlaps but doesn't equal the Button's. The
-    // fix is to make the Button's hit region explicit with `.contentShape`
-    // and ensure it covers the full 48x48 frame, not just the inscribed
-    // circle. Symptom of the bug: pressing play does *nothing* —
-    // timer.start() never runs, no checkpoint is written, no state pushed.
+    // Native glass button styles own their hit region, unlike a
+    // `.glassEffect` modifier on a plain Button, which intermittently
+    // swallowed play clicks on Tahoe (see 6ab52b9).
     @ViewBuilder
     private func controlPrimaryButton(systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
         if #available(macOS 26.0, *) {
             Button(action: action) {
                 Image(systemName: systemImage)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .contentShape(Rectangle())
+                    .frame(width: 34, height: 34)
             }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive().tint(tint), in: Circle())
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.circle)
+            .tint(tint)
         } else {
             Button(action: action) {
                 Image(systemName: systemImage)
@@ -383,11 +379,10 @@ struct TimerView: View {
             Button(action: action) {
                 Image(systemName: systemImage)
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+                    .frame(width: 22, height: 22)
             }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: Circle())
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
             .help(help)
         } else {
             Button(action: action) {
@@ -400,6 +395,17 @@ struct TimerView: View {
             }
             .buttonStyle(.plain)
             .help(help)
+        }
+    }
+
+    // A glass lens inside the ring so the ambient backdrop bends through the countdown.
+    @ViewBuilder
+    private var ringLens: some View {
+        if #available(macOS 26.0, *) {
+            Circle()
+                .fill(.clear)
+                .frame(width: 124, height: 124)
+                .glassEffect(.regular.tint(phaseColor.opacity(timer.isRunning ? 0.18 : 0.08)), in: Circle())
         }
     }
 

@@ -177,6 +177,22 @@ class DayStore: ObservableObject {
         return streak
     }
 
+    /// Days with a written commitment, newest first.
+    var committedDays: [DayRecord] {
+        records
+            .filter { $0.commitmentText?.isEmpty == false }
+            .sorted { $0.calendarDay > $1.calendarDay }
+    }
+
+    var bestCommitmentStreak: Int {
+        var best = 0, run = 0
+        for r in committedDays.reversed() where r.commitmentFulfilled != nil {
+            run = r.commitmentFulfilled == true ? run + 1 : 0
+            best = max(best, run)
+        }
+        return best
+    }
+
     /// Tally of fulfilled / missed / unreviewed days with commitments over
     /// the last `n` calendar days (inclusive of today).
     func commitmentTally(lastDays n: Int) -> (fulfilled: Int, missed: Int, unreviewed: Int) {
