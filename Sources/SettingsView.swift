@@ -21,16 +21,15 @@ struct SettingsView: View {
     @State private var manualLogged = false
     @State private var dedupResult: String = ""
 
-    private var reviewTimeBinding: Binding<Date> {
+    private func timeBinding(_ key: ReferenceWritableKeyPath<AppSettings, Int>) -> Binding<Date> {
         Binding(
             get: {
-                Calendar.current.date(bySettingHour: settings.commitmentReviewMinutes / 60,
-                                      minute: settings.commitmentReviewMinutes % 60,
-                                      second: 0, of: Date()) ?? Date()
+                let m = settings[keyPath: key]
+                return Calendar.current.date(bySettingHour: m / 60, minute: m % 60, second: 0, of: Date()) ?? Date()
             },
             set: {
                 let c = Calendar.current.dateComponents([.hour, .minute], from: $0)
-                settings.commitmentReviewMinutes = (c.hour ?? 21) * 60 + (c.minute ?? 0)
+                settings[keyPath: key] = (c.hour ?? 21) * 60 + (c.minute ?? 0)
             }
         )
     }
@@ -115,7 +114,7 @@ struct SettingsView: View {
                             Text("Remind me at")
                                 .font(.system(size: 12, weight: .medium))
                             Spacer()
-                            DatePicker("", selection: reviewTimeBinding, displayedComponents: .hourAndMinute)
+                            DatePicker("", selection: timeBinding(\.commitmentReviewMinutes), displayedComponents: .hourAndMinute)
                                 .labelsHidden()
                                 .datePickerStyle(.field)
                                 .fixedSize()
@@ -125,6 +124,26 @@ struct SettingsView: View {
                             .foregroundStyle(.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                }
+
+                Divider()
+
+                SectionLabel("LEETCODE")
+                ToggleRow(label: "Evening nudge if under goal", isOn: $settings.leetCodeNudge)
+                if settings.leetCodeNudge {
+                    HStack {
+                        Text("Nudge at")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        DatePicker("", selection: timeBinding(\.leetCodeNudgeMinutes), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .datePickerStyle(.field)
+                            .fixedSize()
+                    }
+                    Text("Only fires if you're below today's SWE problem goal — and warns when your streak is on the line.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Divider()

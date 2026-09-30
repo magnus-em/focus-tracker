@@ -795,7 +795,7 @@ struct LogProblemOverlay: View {
     @State private var urlText: String = ""
     @State private var selectedSource: String = ""
     @AppStorage("logProblemDomain") private var selectedDomain: ProblemDomain = .quant
-    @State private var pickedGrind: Grind75Problem? = nil
+    @State private var pickedTitle: String? = nil
     @State private var showGrindBrowser = false
     @State private var selectedCategories: Set<String> = []
     @State private var selectedDifficulty: ProblemDifficulty = .medium
@@ -812,18 +812,30 @@ struct LogProblemOverlay: View {
         Set(store.problems.compactMap { Grind75Catalog.problem(matching: $0)?.slug })
     }
 
-    private var grindSuggestions: [Grind75Problem] {
-        guard selectedDomain == .swe, pickedGrind == nil,
+    private var lcSuggestions: [LCProblem] {
+        guard selectedDomain == .swe, pickedTitle == nil,
               !title.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return Array(Grind75Catalog.search(title).prefix(6))
+        return Array(LeetCodeCatalog.shared.search(title).prefix(6))
+    }
+
+    private var loggedLCSlugs: Set<String> {
+        Set(store.problems.compactMap { LeetCodeCatalog.shared.problem(matching: $0)?.slug })
     }
 
     private func pickGrind(_ p: Grind75Problem) {
-        pickedGrind = p
-        title = p.title
-        urlText = p.url
-        selectedDifficulty = p.difficulty
-        selectedCategories = Set(p.categories)
+        prefill(title: p.title, url: p.url, difficulty: p.difficulty, categories: p.categories)
+    }
+
+    private func pickLC(_ p: LCProblem) {
+        prefill(title: p.title, url: p.url, difficulty: p.difficulty, categories: p.categories)
+    }
+
+    private func prefill(title t: String, url: String, difficulty: ProblemDifficulty, categories: [String]) {
+        pickedTitle = t
+        title = t
+        urlText = url
+        selectedDifficulty = difficulty
+        selectedCategories = Set(categories)
         if let lc = settings.problemSources.first(where: { $0.localizedCaseInsensitiveContains("leetcode") }) {
             selectedSource = lc
         }
@@ -872,7 +884,7 @@ struct LogProblemOverlay: View {
                                 Button {
                                     selectedDomain = domain
                                     selectedCategories = []
-                                    pickedGrind = nil
+                                    pickedTitle = nil
                                 } label: {
                                     HStack(spacing: 5) {
                                         Image(systemName: domain.icon)
@@ -901,7 +913,7 @@ struct LogProblemOverlay: View {
                                     .font(.system(size: 9, weight: .medium))
                                     .foregroundStyle(.tertiary)
                             }
-                            TextField(selectedDomain == .swe ? "Search Grind 75 or type any name" : "e.g. Coin Flip Variance",
+                            TextField(selectedDomain == .swe ? "Search LeetCode by # or title, or type any name" : "e.g. Coin Flip Variance",
                                       text: $title)
                                 .font(.system(size: 13, weight: .medium))
                                 .textFieldStyle(.plain)
@@ -911,18 +923,18 @@ struct LogProblemOverlay: View {
                                 .background(Color.secondary.opacity(0.07))
                                 .cornerRadius(8)
                                 .onSubmit {
-                                    if let top = grindSuggestions.first { pickGrind(top) }
+                                    if let top = lcSuggestions.first { pickLC(top) }
                                     else if canLog { logAndClose() }
                                 }
                                 .onChange(of: title) { _, new in
-                                    if let p = pickedGrind, new != p.title { pickedGrind = nil }
+                                    if let t = pickedTitle, new != t { pickedTitle = nil }
                                 }
 
-                            if !grindSuggestions.isEmpty {
-                                let done = loggedGrindSlugs
+                            if !lcSuggestions.isEmpty {
+                                let done = loggedLCSlugs
                                 VStack(spacing: 0) {
-                                    ForEach(grindSuggestions) { p in
-                                        Grind75Row(problem: p, done: done.contains(p.slug)) { pickGrind(p) }
+                                    ForEach(lcSuggestions) { p in
+                                        LCSuggestionRow(problem: p, done: done.contains(p.slug)) { pickLC(p) }
                                     }
                                 }
                                 .background(Color.secondary.opacity(0.05))
@@ -1183,7 +1195,7 @@ struct LogProblemOverlay: View {
                 .tint(ProblemDomain.swe.color)
                 .controlSize(.small)
 
-            if let next, pickedGrind == nil, !showGrindBrowser {
+            if let next, pickedTitle == nil, !showGrindBrowser {
                 Button { pickGrind(next) } label: {
                     HStack(spacing: 6) {
                         Text("Next up")
@@ -1272,6 +1284,38 @@ private struct Grind75Row: View {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(.green)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct LCSuggestionRow: View {
+    let problem: LCProblem
+    let done: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Circle().fill(problem.difficulty.color).frame(width: 6, height: 6)
+                Text("\(problem.number)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                Text(problem.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(done ? .secondary : .primary)
+                    .lineLimit(1)
+                if problem.paidOnly {
+                    Image(systemName: "lock.fill").font(.system(size: 8)).foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 4)
+                if done {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green)
                 }
             }
             .padding(.horizontal, 8)

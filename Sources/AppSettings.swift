@@ -46,6 +46,19 @@ class AppSettings: ObservableObject {
     @Published var todayCommitment: String {
         didSet { sd.set(todayCommitment, forKey: "todayCommitment") }
     }
+    /// Unique LeetCode problems to reach by `leetCodeDeadline`.
+    @Published var leetCodeTarget: Int {
+        didSet { sd.set(leetCodeTarget, forKey: "leetCodeTarget") }
+    }
+    @Published var leetCodeDeadline: Date? {
+        didSet { sd.set(leetCodeDeadline?.timeIntervalSince1970 ?? 0, forKey: "leetCodeDeadline") }
+    }
+    @Published var leetCodeNudge: Bool {
+        didSet { sd.set(leetCodeNudge, forKey: "leetCodeNudge") }
+    }
+    @Published var leetCodeNudgeMinutes: Int {
+        didSet { sd.set(leetCodeNudgeMinutes, forKey: "leetCodeNudgeMinutes") }
+    }
     @Published var commitmentReviewReminder: Bool {
         didSet { sd.set(commitmentReviewReminder, forKey: "commitmentReviewReminder") }
     }
@@ -131,6 +144,9 @@ class AppSettings: ObservableObject {
             "autoBreakEnabled": true,
             "commitmentEnabled": true,
             "commitmentReviewReminder": true,
+            "leetCodeTarget": 150,
+            "leetCodeNudge": true,
+            "leetCodeNudgeMinutes": 20 * 60,
             "commitmentReviewMinutes": 21 * 60,
             "quantGoal": 0,
             "quantWeeklyGoal": 0,
@@ -158,6 +174,11 @@ class AppSettings: ObservableObject {
         todayCommitment = d.string(forKey: "todayCommitment") ?? ""
         commitmentReviewReminder = d.bool(forKey: "commitmentReviewReminder")
         commitmentReviewMinutes = d.integer(forKey: "commitmentReviewMinutes")
+        leetCodeTarget = d.integer(forKey: "leetCodeTarget")
+        let lcDeadline = d.double(forKey: "leetCodeDeadline")
+        leetCodeDeadline = lcDeadline > 0 ? Date(timeIntervalSince1970: lcDeadline) : nil
+        leetCodeNudge = d.bool(forKey: "leetCodeNudge")
+        leetCodeNudgeMinutes = d.integer(forKey: "leetCodeNudgeMinutes")
         quantGoal = d.integer(forKey: "quantGoal")
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")
@@ -206,6 +227,11 @@ class AppSettings: ObservableObject {
         todayCommitment = d.string(forKey: "todayCommitment") ?? todayCommitment
         commitmentReviewReminder = d.bool(forKey: "commitmentReviewReminder")
         commitmentReviewMinutes = d.integer(forKey: "commitmentReviewMinutes")
+        leetCodeTarget = d.integer(forKey: "leetCodeTarget")
+        let lcDeadline = d.double(forKey: "leetCodeDeadline")
+        leetCodeDeadline = lcDeadline > 0 ? Date(timeIntervalSince1970: lcDeadline) : nil
+        leetCodeNudge = d.bool(forKey: "leetCodeNudge")
+        leetCodeNudgeMinutes = d.integer(forKey: "leetCodeNudgeMinutes")
         quantGoal = d.integer(forKey: "quantGoal")
         quantWeeklyGoal = d.integer(forKey: "quantWeeklyGoal")
         sweGoal = d.integer(forKey: "sweGoal")

@@ -26,6 +26,8 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/ScratchStore.swift` | Scratchpad checklist items. SwiftData `StoredScratchItem`. |
 | `Sources/CommitmentStore.swift` | AVFoundation voice oath recorder. Audio at `oaths/YYYY-MM-DD.m4a`. |
 | `Sources/AppSettings.swift` | All settings, UserDefaults-backed. Bundle id `com.magnus.focus`. |
+| `Sources/LeetCodeStore.swift` | LeetCode grind tracking derived from `ProblemStore` (every solve is a normal SWE `ProblemEntry`, matched to the catalog by URL slug, then title). Streaks, pace vs target/deadline, pattern coverage, difficulty mix vs 20/60/20 target, solve-time medians vs 15/25/40m, redo queue, milestones, Smart pick, stopwatch (persisted in UserDefaults), evening nudge notification. |
+| `Sources/LeetCodeCatalog.swift` | All ~3.6k LeetCode algorithm problems from `Sources/Resources/leetcode.json` (LeetCode GraphQL + NeetCode pattern labels + Blind75/NC150/NC250/Grind75/Grind169 bitmask). One primary pattern per problem (NeetCode label, else ordered tag rules). "Update from LeetCode" refetches into `Focus/leetcode-catalog.json`; newer `generated` wins. |
 
 ### Logic / glue
 
@@ -49,6 +51,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/ScratchpadView.swift` | Quick checklist. |
 | `Sources/SettingsView.swift` | All settings UI. |
 | `Sources/BlockedSitesView.swift` | Domain list editor for site blocking. |
+| `Sources/LeetCodeView.swift` | Standalone LeetCode window (`LeetCodeWindowController`), opened from the popover's LeetCode button. Left: searchable/filterable browser. Right: Grind tab (today ring, stopwatch, problem card + attempt history, Smart/Random pick, redo queue, pace) and Stats tab (28-day chart, pattern grid, mix, speed, quality, lists, milestones). |
 | `Sources/DashboardView.swift` | Standalone NSWindow. Left: today's log (focus + breaks + problems, newest-first, click focus/problem rows to edit). Right: stat cards, problem progress, 14-day chart, focus split, insights, weak areas, lifetime row. `DashboardWindowController.open(...)` opens/refocuses. |
 
 ## Data model
@@ -104,6 +107,12 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 
 ### Site blocking
 Requires admin password on first setup. Sets up sudoers entry + helper script. Modifies `/etc/hosts` + `pf` firewall while a focus session is active. Cleanup runs on quit and on next launch after a crash via `SiteBlocker.cleanupIfNeeded()`.
+
+### LeetCode tracker
+- Daily goal = `settings.sweGoal` (falls back to 3). Target/deadline: `leetCodeTarget`, `leetCodeDeadline` (falls back to `interviewDate`).
+- Solve confidence drives the existing spaced repetition (`ProblemEntry.reviewDueDate`); "needed hints/AI" → `needsReview`. Redo queue uses each problem's latest attempt.
+- `CommitmentReminder` is the app's only `UNUserNotificationCenterDelegate`; non-commitment taps go to `onOtherTap(identifier)` (LeetCode nudge opens the LeetCode window).
+- Regenerating `leetcode.json`: page LeetCode GraphQL `questionList` 100 at a time (limit is capped at 100), keep `categoryTitle == "Algorithms"`.
 
 ### Menu bar
 - Idle: `scope` SF Symbol.

@@ -18,6 +18,7 @@ let package = Package(
                 // KaTeX bundle for math rendering in Practice Mode.
                 // Loaded by MathView via WKWebView from the app bundle.
                 .copy("Resources/katex"),
+                .copy("Resources/leetcode.json"),
             ]
         )
     ]

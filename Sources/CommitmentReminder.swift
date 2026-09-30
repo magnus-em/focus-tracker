@@ -19,6 +19,9 @@ final class CommitmentReminder: NSObject, UNUserNotificationCenterDelegate {
     private weak var settings: AppSettings?
     private var onOpen: (() -> Void)?
     private var snoozedUntil: Date?
+    /// This class is the app's only notification delegate; taps on other notifications
+    /// (e.g. the LeetCode nudge) are forwarded here by request identifier.
+    var onOtherTap: ((String) -> Void)?
     private var cancellables = Set<AnyCancellable>()
 
     func install(dayStore: DayStore, settings: AppSettings, onOpen: @escaping () -> Void) {
@@ -94,6 +97,14 @@ final class CommitmentReminder: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
+        let requestID = response.notification.request.identifier
+        guard requestID == Self.requestID else {
+            if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+                DispatchQueue.main.async { [weak self] in self?.onOtherTap?(requestID) }
+            }
+            completionHandler()
+            return
+        }
         let info = response.notification.request.content.userInfo
         let dayID = (info["dayID"] as? String).flatMap(UUID.init(uuidString:))
         let action = response.actionIdentifier

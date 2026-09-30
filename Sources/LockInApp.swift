@@ -72,6 +72,8 @@ struct FocusApp: App {
     @StateObject private var practiceController: PracticeWindowController
     @StateObject private var zetamacStore: ZetamacStore
     @StateObject private var zetamacController: ZetamacWindowController
+    @StateObject private var leetCodeStore: LeetCodeStore
+    @StateObject private var leetCodeController: LeetCodeWindowController
 
     init() {
         // Must observe before focusContainer (lazy) starts mirroring, or the setup event is missed.
@@ -127,12 +129,19 @@ struct FocusApp: App {
         _zetamacController   = StateObject(wrappedValue: zetamacCtrl)
         let onboarding = OnboardingWindowController()
         _onboardingController = StateObject(wrappedValue: onboarding)
+        let leetCode = LeetCodeStore(catalog: .shared, problemStore: problems, settings: appSettings)
+        let leetCodeCtrl = LeetCodeWindowController()
+        _leetCodeStore       = StateObject(wrappedValue: leetCode)
+        _leetCodeController  = StateObject(wrappedValue: leetCodeCtrl)
 
         SiteBlocker.cleanupIfNeeded()
 
         CommitmentReminder.shared.install(dayStore: days, settings: appSettings) {
             dashboard.open(sessionStore: store, problemStore: problems, homeworkStore: homework,
                            settings: appSettings, dayStore: days, timerManager: timer)
+        }
+        CommitmentReminder.shared.onOtherTap = { id in
+            if id == LeetCodeStore.nudgeID { leetCodeCtrl.open(store: leetCode, settings: appSettings) }
         }
 
         NotificationCenter.default.addObserver(
@@ -191,6 +200,7 @@ struct FocusApp: App {
                 practiceStore: practiceStore,
                 homeworkStoreForPractice: homeworkStore,
                 zetamacStore: zetamacStore,
+                leetCodeStore: leetCodeStore,
                 openDashboard: { [self] in
                     dashboardController.open(
                         sessionStore: sessionStore,
@@ -212,6 +222,9 @@ struct FocusApp: App {
                 },
                 openZetamac: { [self] in
                     zetamacController.open(store: zetamacStore)
+                },
+                openLeetCode: { [self] in
+                    leetCodeController.open(store: leetCodeStore, settings: settings)
                 }
             )
             .modelContainer(focusContainer)
@@ -237,10 +250,12 @@ struct PopoverContent: View {
     @ObservedObject var practiceStore: PracticeStore
     @ObservedObject var homeworkStoreForPractice: HomeworkStore
     @ObservedObject var zetamacStore: ZetamacStore
+    @ObservedObject var leetCodeStore: LeetCodeStore
     let openDashboard: () -> Void
     let openOnboarding: () -> Void
     let openPractice: () -> Void
     let openZetamac: () -> Void
+    let openLeetCode: () -> Void
 
     @State private var selectedTab = 0
     @State private var showCommitment = false
@@ -298,6 +313,52 @@ struct PopoverContent: View {
     private var zetamacLiveTimeShort: String {
         let s = zetamacStore.liveSecondsLeft
         return String(format: "%02d:%02d", s / 60, s % 60)
+    }
+
+    private var leetCodeButton: some View {
+        let orange = Color(red: 0.98, green: 0.63, blue: 0.16)
+        let lc = leetCodeStore
+        return Button { openLeetCode() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                if let p = lc.activeProblem {
+                    Text("LeetCode · #\(p.number) \(p.title)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                } else {
+                    Text("LeetCode")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                Spacer(minLength: 4)
+                if lc.activeProblem == nil {
+                    Text("\(lc.todayCount)/\(lc.dailyGoal)")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 4)
+                            .fill((lc.todayCount >= lc.dailyGoal ? Color.green : orange).opacity(0.2)))
+                        .foregroundStyle(lc.todayCount >= lc.dailyGoal ? Color.green : orange)
+                    if lc.streak > 0 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "flame.fill").font(.system(size: 9))
+                            Text("\(lc.streak)").font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(lc.streakAtRisk ? Color.red : orange)
+                    }
+                }
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+            .foregroundStyle(orange)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 9).fill(orange.opacity(0.10)))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(orange.opacity(0.22), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
     }
 
     private var dueReviewBadge: Int { homeworkStoreForPractice.dueForReview.count }
@@ -429,6 +490,8 @@ struct PopoverContent: View {
             .frame(height: 480)
 
             Divider()
+
+                leetCodeButton
 
                 // Practice Mode CTA — opens the Stat-110 pacing tracker in
                 // its own window. Title only (no "· Stat 110 pacing"
