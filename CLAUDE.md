@@ -24,6 +24,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/DayStore.swift` | Day boundaries (`DayRecord { calendarDay, dayStart, dayEnd }`). SwiftData `StoredDayRecord`. |
 | `Sources/ProblemStore.swift` | Logged problems per domain. SwiftData `StoredProblem`. |
 | `Sources/ScratchStore.swift` | Scratchpad checklist items. SwiftData `StoredScratchItem`. |
+| `Sources/HealthStore.swift` | Health habit log. SwiftData `StoredHealthEvent { date, kind }`; `HealthKind` enum (add a case for a new habit, no schema change). Weekly counts paired with focus hours, days since last, longest gap. |
 | `Sources/CommitmentStore.swift` | AVFoundation voice oath recorder. Audio at `oaths/YYYY-MM-DD.m4a`. |
 | `Sources/AppSettings.swift` | All settings, UserDefaults-backed. Bundle id `com.magnus.focus`. |
 | `Sources/LeetCodeStore.swift` | LeetCode grind tracking derived from `ProblemStore` (every solve is a normal SWE `ProblemEntry`, matched to the catalog by URL slug, then title). Streaks, pace vs target/deadline, pattern coverage, difficulty mix vs 20/60/20 target, solve-time medians vs 15/25/40m, redo queue, milestones, Smart pick, stopwatch (persisted in UserDefaults), evening nudge notification. |
@@ -49,6 +50,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/StatsView.swift` | Popover stats tab. Today card, 7-day card, focus split, 18-week heatmap, lifetime row. |
 | `Sources/ProblemsView.swift` / `ProblemDetailView.swift` | Problem logging + review queue. SWE log sheet searches/browses `FocusCore/Grind75Catalog.swift` (8-week schedule) and prefills title/URL/difficulty/categories; progress matched by LeetCode URL slug, then title. |
 | `Sources/ScratchpadView.swift` | Quick checklist. |
+| `Sources/HealthView.swift` | Popover Health tab (heart chip). One-tap log + undo, backdate popover, 12-week chart, per-week count vs focus hours with median-split insight, recent list with delete. |
 | `Sources/SettingsView.swift` | All settings UI. |
 | `Sources/BlockedSitesView.swift` | Domain list editor for site blocking. |
 | `Sources/LeetCodeView.swift` | Standalone LeetCode window (`LeetCodeWindowController`), opened from the popover's LeetCode button. Left: searchable/filterable browser. Right: Grind tab (today ring, stopwatch, problem card + attempt history, Smart/Random pick, redo queue, pace) and Stats tab (28-day chart, pattern grid, mix, speed, quality, lists, milestones). |
@@ -143,11 +145,12 @@ Requires admin password on first setup. Sets up sudoers entry + helper script. M
 - [x] 18-week heatmap
 - [x] In-progress focus session in dashboard log
 - [x] Material-based glass pass (`GlassEffects.swift`)
-- [x] CloudKit mirror health (`FocusCore/CloudSyncMonitor.swift`) in Settings + popover warning when failing/stale
+- [x] CloudKit mirror health (`FocusCore/CloudSyncMonitor.swift`) in Settings + popover warning when failing/stale. Stale = no successful setup/import/export in 3 days (imports alone only fire when another device writes).
 - [x] Daily store backups
 
 - [x] Native Liquid Glass on macOS 26 (`glassEffect`, `GlassEffectContainer`, `.buttonStyle(.glass/.glassProminent)` on timer controls, tinted glass on selected chips); material fallback on 14–15
 - [x] Grind 75 picker in Log Problem
+- [x] Health tab (habit log, first habit: fap)
 
 ### In flight (see HANDOFF.md)
 _(none)_

@@ -615,7 +615,7 @@ struct SyncHealthRows: View {
     private var title: String {
         switch monitor.health {
         case .healthy: return "Syncing"
-        case .stale: return "No download in 3+ days"
+        case .stale: return "No sync activity in 3+ days"
         case .failing: return "Sync failing"
         case .unknown: return "Waiting for first sync…"
         }

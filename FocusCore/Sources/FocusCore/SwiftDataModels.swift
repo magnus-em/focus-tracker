@@ -446,6 +446,24 @@ public final class StoredMasteryAttempt {
     }
 }
 
+/// One occurrence of a tracked health habit. `kind` is a `HealthKind`
+/// raw value so new habits can be added without a schema change.
+@Model
+public final class StoredHealthEvent {
+    public var id: UUID = UUID()
+    public var date: Date = Date()
+    public var kind: String = ""
+
+    public init() {}
+
+    public convenience init(id: UUID = UUID(), date: Date, kind: String) {
+        self.init()
+        self.id = id
+        self.date = date
+        self.kind = kind
+    }
+}
+
 // MARK: - Schema
 
 public enum FocusSchema {
@@ -459,5 +477,6 @@ public enum FocusSchema {
         StoredDrillAttempt.self,
         StoredMasteryRecord.self,
         StoredMasteryAttempt.self,
+        StoredHealthEvent.self,
     ]
 }

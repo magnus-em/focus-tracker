@@ -63,6 +63,7 @@ struct FocusApp: App {
     @StateObject private var problemStore: ProblemStore
     @StateObject private var homeworkStore: HomeworkStore
     @StateObject private var scratchStore: ScratchStore
+    @StateObject private var healthStore: HealthStore
     @StateObject private var dayStore: DayStore
     @StateObject private var dashboardController: DashboardWindowController
     @StateObject private var onboardingController: OnboardingWindowController
@@ -111,6 +112,7 @@ struct FocusApp: App {
         _problemStore        = StateObject(wrappedValue: problems)
         _homeworkStore       = StateObject(wrappedValue: homework)
         _scratchStore        = StateObject(wrappedValue: ScratchStore(container: focusContainer))
+        _healthStore         = StateObject(wrappedValue: HealthStore(container: focusContainer))
         let days = DayStore(container: focusContainer)
         let dashboard = DashboardWindowController()
         _dayStore            = StateObject(wrappedValue: days)
@@ -196,6 +198,7 @@ struct FocusApp: App {
                 problemStore: problemStore,
                 homeworkStore: homeworkStore,
                 scratchStore: scratchStore,
+                healthStore: healthStore,
                 dayStore: dayStore,
                 practiceStore: practiceStore,
                 homeworkStoreForPractice: homeworkStore,
@@ -246,6 +249,7 @@ struct PopoverContent: View {
     @ObservedObject var problemStore: ProblemStore
     @ObservedObject var homeworkStore: HomeworkStore
     @ObservedObject var scratchStore: ScratchStore
+    @ObservedObject var healthStore: HealthStore
     @ObservedObject var dayStore: DayStore
     @ObservedObject var practiceStore: PracticeStore
     @ObservedObject var homeworkStoreForPractice: HomeworkStore
@@ -368,7 +372,7 @@ struct PopoverContent: View {
         return Button { selectedTab = tag } label: {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: selected ? .semibold : .regular))
-                .frame(width: 44, height: 30)
+                .frame(width: 40, height: 30)
                 .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(Color.secondary))
         }
         .buttonStyle(.plain)
@@ -468,6 +472,7 @@ struct PopoverContent: View {
                 tabChipButton(icon: "chart.bar.fill", tag: 1)
                 tabChipButton(icon: "checklist", tag: 2)
                 tabChipButton(icon: "brain.head.profile", tag: 3)
+                tabChipButton(icon: "heart.fill", tag: 5)
                 tabChipButton(icon: "gearshape.fill", tag: 4)
             }
             .padding(.horizontal, 12)
@@ -484,6 +489,7 @@ struct PopoverContent: View {
                 case 1: StatsView(store: sessionStore, settings: settings)
                 case 2: ProblemsView(store: problemStore, homeworkStore: homeworkStore, settings: settings)
                 case 3: ScratchpadView(store: scratchStore)
+                case 5: HealthView(store: healthStore, sessionStore: sessionStore)
                 default: SettingsView(settings: settings, timer: timerManager, store: sessionStore, openOnboarding: openOnboarding)
                 }
             }

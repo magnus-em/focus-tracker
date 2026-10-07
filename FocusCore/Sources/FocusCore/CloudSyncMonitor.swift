@@ -26,7 +26,9 @@ public final class CloudSyncMonitor: ObservableObject {
 
     @Published public private(set) var snapshot: Snapshot
 
-    /// No successful import for this long counts as stale.
+    /// No successful mirror event of any kind for this long counts as stale.
+    /// Imports only fire when another device changed something, so a quiet
+    /// iPad must not make a Mac that's exporting fine look broken.
     public static let staleAfter: TimeInterval = 3 * 24 * 3600
 
     private static let defaultsKey = "cloudSyncMonitor.snapshot"
@@ -66,7 +68,8 @@ public final class CloudSyncMonitor: ObservableObject {
     public var health: Health {
         let s = snapshot
         if s.lastEventFailed { return .failing }
-        guard let last = s.lastImport ?? s.lastSetup else { return .unknown }
+        guard let last = [s.lastSetup, s.lastImport, s.lastExport].compactMap({ $0 }).max()
+        else { return .unknown }
         return Date().timeIntervalSince(last) > Self.staleAfter ? .stale : .healthy
     }
 
