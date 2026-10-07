@@ -10,7 +10,7 @@ _(nothing in flight right now)_
 
 ## Future / nice-to-have
 
-_(nothing queued)_
+- **iPad push for CloudKit**: `FocusPad.entitlements` has no `aps-environment`, so the iPad never gets CloudKit pushes and only pulls Mac changes on launch/foreground. Fix needs Xcode signed in: FocusPad target → + Capability → Push Notifications (+ Background Modes → Remote notifications), then add `UIBackgroundModes: [remote-notification]` to `FocusPad/project.yml`. CLI `-allowProvisioningUpdates` fails with "No Accounts".
 
 ## Done in last session — already reflected in CLAUDE.md
 - Hours-based goal, day tracking, single break model, manual breaks, breaks-as-sessions, commitment-on-by-default, gutted CompletionPanel, removed flow decision, dashboard breaks in log, consistency + best-week metrics, sessions count demoted everywhere.
