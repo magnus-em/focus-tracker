@@ -75,6 +75,7 @@ final class GlobalHotKey {
 
     static let spaceKey: UInt32     = UInt32(kVK_Space)
     static let pKey: UInt32         = UInt32(kVK_ANSI_P)
+    static let sKey: UInt32         = UInt32(kVK_ANSI_S)
     static let controlModifier: UInt32 = UInt32(controlKey)
     static let optionModifier: UInt32  = UInt32(optionKey)
     static let commandModifier: UInt32 = UInt32(cmdKey)

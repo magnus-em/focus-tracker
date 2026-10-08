@@ -31,6 +31,10 @@ class AppSettings: ObservableObject {
     @Published var tags: [String] {
         didSet { sd.set(tags, forKey: "tags") }
     }
+    /// Category the ⌃⌥S quick-start hotkey tags a session with.
+    @Published var quickStartTag: String {
+        didSet { sd.set(quickStartTag, forKey: "quickStartTag") }
+    }
     @Published var pauseGraceMinutes: Int {
         didSet { sd.set(pauseGraceMinutes, forKey: "pauseGraceMinutes") }
     }
@@ -167,6 +171,7 @@ class AppSettings: ObservableObject {
         blockDuringBreaks = d.bool(forKey: "blockDuringBreaks")
         blockedSites = d.stringArray(forKey: "blockedSites") ?? []
         tags = d.stringArray(forKey: "tags") ?? []
+        quickStartTag = d.string(forKey: "quickStartTag") ?? "HW"
         pauseGraceMinutes = d.integer(forKey: "pauseGraceMinutes")
         autoBreakEnabled = d.bool(forKey: "autoBreakEnabled")
         commitmentEnabled = d.bool(forKey: "commitmentEnabled")

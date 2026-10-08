@@ -155,6 +155,25 @@ struct SettingsView: View {
                 IntRow(label: "Auto-end pause after", value: $settings.pauseGraceMinutes, range: 2...60, suffix: "min")
 
                 HStack {
+                    Text("Quick start / stop")
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Picker("", selection: $settings.quickStartTag) {
+                        ForEach(settings.tags, id: \.self) { Text($0).tag($0) }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                    Text("⌃⌥S")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(4)
+                }
+
+                HStack {
                     Text("Pause / resume hotkey")
                         .font(.system(size: 12, weight: .medium))
                     Spacer()

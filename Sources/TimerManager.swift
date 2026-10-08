@@ -388,6 +388,24 @@ class TimerManager: ObservableObject {
         }
     }
 
+    enum QuickToggleResult { case started(String), stopped(minutes: Int, label: String) }
+
+    /// One-key start/stop for when opening the popover is too much friction.
+    /// Idle or on a break → start focus (keeping a chosen category, else `tag`).
+    /// Focus active → stop and save.
+    func quickToggle(tag: String) -> QuickToggleResult {
+        if currentPhase == .work && isActive {
+            let label = currentLabel
+            let minutes = Int(currentElapsedSeconds / 60)
+            reset()
+            return .stopped(minutes: minutes, label: label)
+        }
+        if isOnBreak { skip() }
+        if currentLabel.isEmpty { currentLabel = tag }
+        start()
+        return .started(currentLabel)
+    }
+
     func toggleRunPause() {
         if isRunning { pause() }
         else if isActive { start() }

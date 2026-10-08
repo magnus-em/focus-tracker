@@ -111,3 +111,67 @@ private struct CompletionToast: View {
         .shadow(color: .black.opacity(0.15), radius: 16, x: 0, y: 6)
     }
 }
+
+/// Brief non-interactive confirmation for global hotkeys, so a keypress
+/// from inside another app has visible feedback.
+final class HotKeyToast {
+    private var panel: NSPanel?
+    private var hideWork: DispatchWorkItem?
+
+    func show(icon: String, title: String, detail: String) {
+        hideWork?.cancel()
+        panel?.close()
+
+        let hosting = NSHostingView(rootView: HotKeyToastView(icon: icon, title: title, detail: detail))
+        let size = hosting.fittingSize
+        let p = NSPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            backing: .buffered, defer: false
+        )
+        p.contentView = hosting
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.level = .floating
+        p.ignoresMouseEvents = true
+        p.isReleasedWhenClosed = false
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        if let screen = NSScreen.main?.visibleFrame {
+            p.setFrameOrigin(NSPoint(x: screen.midX - size.width / 2, y: screen.maxY - size.height - 24))
+        }
+        p.orderFrontRegardless()
+        panel = p
+
+        let work = DispatchWorkItem { [weak self] in
+            self?.panel?.close()
+            self?.panel = nil
+        }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+}
+
+private struct HotKeyToastView: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(red: 0.96, green: 0.36, blue: 0.36))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                if !detail.isEmpty {
+                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .fixedSize()
+    }
+}

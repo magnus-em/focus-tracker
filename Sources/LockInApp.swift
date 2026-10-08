@@ -3,6 +3,8 @@ import SwiftData
 import FocusCore
 
 private var _pauseHotKey: GlobalHotKey?
+private var _quickStartHotKey: GlobalHotKey?
+private let _hotKeyToast = HotKeyToast()
 
 /// Shared SwiftData container. CloudKit sync is on by default — the build
 /// is properly entitled for `iCloud.com.magnus.focustracker` and we want
@@ -177,6 +179,23 @@ struct FocusApp: App {
             modifiers: GlobalHotKey.controlModifier | GlobalHotKey.optionModifier
         ) { [weak timer] in
             timer?.toggleRunPause()
+        }
+
+        _quickStartHotKey = GlobalHotKey(
+            keyCode: GlobalHotKey.sKey,
+            modifiers: GlobalHotKey.controlModifier | GlobalHotKey.optionModifier
+        ) { [weak timer, weak days, weak appSettings] in
+            guard let timer, let appSettings else { return }
+            if let days, !days.isDayStarted { days.isDayEnded ? days.reopenDay() : days.startDay() }
+            switch timer.quickToggle(tag: appSettings.quickStartTag) {
+            case .started(let label):
+                _hotKeyToast.show(icon: "play.fill", title: "Focus started",
+                                  detail: [label, timer.timeString].filter { !$0.isEmpty }.joined(separator: " · "))
+            case .stopped(let minutes, let label):
+                _hotKeyToast.show(icon: "stop.fill",
+                                  title: minutes >= 1 ? "Saved \(minutes)m" : "Stopped (under 1m, not saved)",
+                                  detail: label)
+            }
         }
 
         NotificationCenter.default.addObserver(

@@ -37,7 +37,7 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/LockInApp.swift` | App entry (`@main FocusApp`). MenuBarExtra. `PopoverContent` wires all stores, hosts tab switcher + commitment overlay. |
 | `Sources/TimerManager.swift` | Timer state machine. `Phase { work, shortBreak, longBreak }` (no rawValue — `displayName` returns "Focus" / "Break"). Phase transitions, partial-session save, manual break, pause-grace auto-finalize, crash-recovery checkpoint, site-blocking orchestration. |
 | `Sources/SiteBlocker.swift` | `/etc/hosts` + `pf` firewall blocking. Requires sudo helper at `/usr/local/bin/focustimer-blocker`. Cleanup on quit + next launch after crash. |
-| `Sources/GlobalHotKey.swift` | ⌃⌥Space pause/resume hotkey. |
+| `Sources/GlobalHotKey.swift` | ⌃⌥Space pause/resume; ⌃⌥S quick start/stop (`TimerManager.quickToggle`, tags with `settings.quickStartTag`, default HW; starts/reopens the day; `HotKeyToast` confirms). |
 | `Sources/CompletionPanel.swift` | Simple 2.5s success toast (`show(label:)`) shown when a focus session completes. |
 | `Sources/Models.swift` | `WorkSession`, `WorkSession.SessionType` (with `isBreak`), `DailySummary`, `DayRecord`, `ProblemEntry` + enums, `ScratchItem`. |
 
