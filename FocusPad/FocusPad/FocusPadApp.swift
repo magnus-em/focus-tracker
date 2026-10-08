@@ -4,22 +4,26 @@ import FocusCore
 
 @main
 struct FocusPadApp: App {
+    /// Shared with App Intents, which can run with no UI (and no engine).
+    static let sharedContainer: ModelContainer = {
+        let useCloud = UserDefaults.standard.object(forKey: "cloudKitSyncEnabled") as? Bool ?? true
+        do {
+            return try FocusModelContainer.make(cloudKitSync: useCloud)
+        } catch {
+            print("[FocusPad] CloudKit init failed, falling back to local: \(error)")
+            return try! FocusModelContainer.make(cloudKitSync: false)
+        }
+    }()
+    @MainActor static weak var liveEngine: FocusTimerEngine?
+
     let container: ModelContainer
     @StateObject private var settings: PadSettings
     @StateObject private var engine: FocusTimerEngine
 
     init() {
-        // Honor the iCloud sync toggle stored in defaults — falls back to local
-        // if CloudKit init fails (no network / not signed in / etc.).
-        let useCloud = UserDefaults.standard.object(forKey: "cloudKitSyncEnabled") as? Bool ?? true
-        let c: ModelContainer
-        do {
-            c = try FocusModelContainer.make(cloudKitSync: useCloud)
-        } catch {
-            print("[FocusPad] CloudKit init failed, falling back to local: \(error)")
-            c = try! FocusModelContainer.make(cloudKitSync: false)
-        }
+        let c = Self.sharedContainer
         self.container = c
+        FocusShortcuts.updateAppShortcutParameters()
 
         // Strict dedup at startup — key is whole-second startTime + type +
         // label + duration rounded to 0.01 min, so legitimately identical
@@ -48,6 +52,7 @@ struct FocusPadApp: App {
             RootView()
                 .environmentObject(settings)
                 .environmentObject(engine)
+                .onAppear { Self.liveEngine = engine }
         }
         .modelContainer(container)
     }

@@ -464,6 +464,22 @@ public final class StoredHealthEvent {
     }
 }
 
+/// A "switch to X at time T" request from a device that may not hold the
+/// live timer (e.g. a phone Shortcut run while the app is suspended).
+/// Append-only so a stale sender can't clobber the shared timer state; each
+/// device applies new commands to its own engine, splitting at `createdAt`.
+@Model
+public final class StoredTimerCommand {
+    public var id: UUID = UUID()
+    public var createdAt: Date = Date()
+    public var actionRaw: String = TimerCommand.Action.switchTo.rawValue
+    public var label: String = ""
+    public var minutes: Double = 0
+    public var deviceID: String = ""
+
+    public init() {}
+}
+
 // MARK: - Schema
 
 public enum FocusSchema {
@@ -478,5 +494,6 @@ public enum FocusSchema {
         StoredMasteryRecord.self,
         StoredMasteryAttempt.self,
         StoredHealthEvent.self,
+        StoredTimerCommand.self,
     ]
 }

@@ -95,6 +95,9 @@ public final class FocusTimerEngine: ObservableObject {
         stateSync.onRemoteChange = { [weak self] state in
             self?.applyRemoteState(state)
         }
+        stateSync.onCommands = { [weak self] cmds in
+            for c in cmds { self?.apply(c) }
+        }
         // Listen for instant local broadcasts (same wifi).
         localBroadcast.onMessage = { [weak self] msg in
             self?.applyRemoteMessage(msg)
@@ -342,6 +345,7 @@ public final class FocusTimerEngine: ObservableObject {
             cancelCompletionNotification()
             return
         }
+        closeSegmentIfReplaced(by: msg.startTime)
         phase = (phaseEnum == .work) ? .work : .breakPhase
         totalTime = msg.totalSeconds
         currentLabel = msg.label
@@ -409,7 +413,7 @@ public final class FocusTimerEngine: ObservableObject {
             return
         }
 
-        // Mirror state.
+        closeSegmentIfReplaced(by: state.startTime)
         phase = (remotePhase == .work) ? .work : .breakPhase
         totalTime = state.totalSeconds
         currentLabel = state.label
@@ -444,6 +448,110 @@ public final class FocusTimerEngine: ObservableObject {
 
     public func toggleRunPause() {
         if isRunning { pause() } else { start() }
+    }
+
+    // MARK: - Switching
+
+    private func elapsed(until date: Date) -> TimeInterval {
+        var e = elapsedBeforePause
+        if let resume = lastResumeTime { e += max(0, date.timeIntervalSince(resume)) }
+        return e
+    }
+
+    /// Save the current session as ending at `date` (if ≥ 1 min).
+    private func closeSegment(at date: Date) {
+        guard let start = sessionStartTime else { return }
+        let e = elapsed(until: date)
+        guard e >= 60 else { return }
+        let isWork = phase == .work
+        insertSession(WorkSession(
+            startTime: start, durationMinutes: e / 60.0,
+            type: isWork ? .work : .shortBreak,
+            label: isWork ? (currentLabel.isEmpty ? nil : currentLabel) : nil,
+            breakKinds: isWork ? nil : (currentBreakKinds.isEmpty ? nil : currentBreakKinds)
+        ))
+    }
+
+    /// A peer's state for a *different* session means it switched without
+    /// necessarily knowing about ours — save ours (insertSession dedups).
+    private func closeSegmentIfReplaced(by newStart: Date?) {
+        guard isActive, let start = sessionStartTime, let newStart,
+              abs(newStart.timeIntervalSince(start)) > 3 else { return }
+        closeSegment(at: newStart > start ? newStart : Date())
+    }
+
+    private func beginSession(phase newPhase: Phase, label: String, kinds: [BreakKind],
+                              plannedSeconds: TimeInterval, at date: Date) {
+        let lead = max(0, Date().timeIntervalSince(date))
+        ticker?.cancel(); ticker = nil
+        isRunning = false
+        phase = newPhase
+        currentLabel = label
+        currentBreakKinds = kinds
+        totalTime = max(plannedSeconds, lead + 60)
+        timeRemaining = totalTime - lead
+        sessionStartTime = date
+        elapsedBeforePause = lead
+        elapsedSeconds = lead
+        lastResumeTime = nil
+        start()
+    }
+
+    /// Split the timeline at `date`: what was running is saved up to then and
+    /// focus on `label` runs from then. Under a minute of focus is relabeled.
+    public func switchTo(_ label: String, at requested: Date = Date()) {
+        var date = min(requested, Date())
+        if let start = sessionStartTime { date = max(date, start) }
+        if phase == .work, isActive {
+            if label == currentLabel {
+                if !isRunning { start() }
+                return
+            }
+            if elapsed(until: date) < 60 {
+                currentLabel = label
+                if isRunning { saveCheckpoint(); pushSharedState() } else { start() }
+                return
+            }
+        }
+        closeSegment(at: date)
+        cancelCompletionNotification()
+        beginSession(phase: .work, label: label, kinds: [], plannedSeconds: settings.workMinutes * 60, at: date)
+    }
+
+    public func stop(at requested: Date) {
+        var date = min(requested, Date())
+        if let start = sessionStartTime { date = max(date, start) }
+        closeSegment(at: date)
+        ticker?.cancel(); ticker = nil
+        isRunning = false
+        cancelCompletionNotification()
+        pushIdleEverywhere()
+        resetSessionState(clearLabel: true)
+        currentBreakKinds = []
+        phase = .work
+        totalTime = settings.workMinutes * 60
+        timeRemaining = totalTime
+    }
+
+    public func startBreak(minutes: Double, kinds: [BreakKind] = [], at requested: Date = Date()) {
+        var date = min(requested, Date())
+        if let start = sessionStartTime { date = max(date, start) }
+        if phase == .work { closeSegment(at: date) }
+        cancelCompletionNotification()
+        beginSession(phase: .breakPhase, label: "", kinds: kinds, plannedSeconds: minutes * 60, at: date)
+    }
+
+    public func apply(_ command: TimerCommand) {
+        switch command.action {
+        case .switchTo:
+            guard !command.label.isEmpty else { return }
+            switchTo(command.label, at: command.createdAt)
+        case .stop:
+            stop(at: command.createdAt)
+        case .startBreak:
+            startBreak(minutes: command.minutes > 0 ? command.minutes : settings.breakMinutes,
+                       at: command.createdAt)
+        }
     }
 
     /// Stop the timer. Saves partial work if ≥ 1 minute elapsed.

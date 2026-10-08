@@ -35,6 +35,8 @@ class TimerManager: ObservableObject {
     private static let checkpointKey = "timerCheckpoint"
 
     var sessionStore: SessionStore?
+    /// Fired after a command from another device (phone Shortcut, etc.) is applied.
+    var onCommandApplied: ((TimerCommand) -> Void)?
     var settings: AppSettings? { didSet { observeSettingsChanges() } }
 
     /// Cross-device live-timer sync. Set externally after init.
@@ -42,6 +44,11 @@ class TimerManager: ObservableObject {
         didSet {
             stateSync?.onRemoteChange = { [weak self] state in
                 self?.applyRemoteState(state)
+            }
+            stateSync?.onCommands = { [weak self] cmds in
+                guard let self else { return }
+                for c in cmds { self.apply(c) }
+                if let last = cmds.last { self.onCommandApplied?(last) }
             }
             // On launch, adopt the shared state if (a) we're idle locally
             // and (b) the stored state is meaningful (version > 0, not idle).
@@ -298,6 +305,7 @@ class TimerManager: ObservableObject {
             unblockIfNeeded()
             return
         }
+        closeSegmentIfReplaced(by: msg.startTime)
         currentPhase = (phaseEnum == .work) ? .work : .shortBreak
         totalTime = msg.totalSeconds
         currentLabel = msg.label
@@ -361,6 +369,7 @@ class TimerManager: ObservableObject {
             unblockIfNeeded()
             return
         }
+        closeSegmentIfReplaced(by: state.startTime)
         currentPhase = (remotePhase == .work) ? .work : .shortBreak
         totalTime = state.totalSeconds
         currentLabel = state.label
@@ -388,6 +397,112 @@ class TimerManager: ObservableObject {
         }
     }
 
+    // MARK: - Switching
+
+    /// Seconds of the current session that fall before `date`.
+    private func elapsed(until date: Date) -> TimeInterval {
+        var e = elapsedBeforePause
+        if let resume = lastResumeTime { e += max(0, date.timeIntervalSince(resume)) }
+        return e
+    }
+
+    /// Save the current session as ending at `date` (if ≥ 1 min). Leaves
+    /// timer state alone — callers reset it.
+    private func closeSegment(at date: Date) {
+        guard let start = sessionStartTime else { return }
+        let e = elapsed(until: date)
+        guard e >= 60 else { return }
+        if currentPhase == .work {
+            sessionStore?.addSession(WorkSession(
+                startTime: start, durationMinutes: e / 60.0,
+                type: .work, label: currentLabel.isEmpty ? nil : currentLabel
+            ))
+        } else {
+            sessionStore?.addSession(WorkSession(
+                startTime: start, durationMinutes: e / 60.0,
+                type: .shortBreak, label: nil,
+                breakKinds: currentBreakKinds.isEmpty ? nil : currentBreakKinds
+            ))
+        }
+    }
+
+    /// A peer's state describing a *different* session than ours means it
+    /// switched; the peer may not have known about ours, so save it here
+    /// (SessionStore dedups if the peer saved it too).
+    private func closeSegmentIfReplaced(by newStart: Date?) {
+        guard isActive, let start = sessionStartTime, let newStart,
+              abs(newStart.timeIntervalSince(start)) > 3 else { return }
+        closeSegment(at: newStart > start ? newStart : Date())
+    }
+
+    /// Begin a session that logically started at `date`, already running.
+    private func beginSession(phase: Phase, label: String, kinds: [BreakKind], plannedSeconds: TimeInterval, at date: Date) {
+        let lead = max(0, Date().timeIntervalSince(date))
+        timer?.cancel(); timer = nil
+        isRunning = false
+        currentPhase = phase
+        currentLabel = label
+        currentBreakKinds = kinds
+        totalTime = max(plannedSeconds, lead + 60)
+        timeRemaining = totalTime - lead
+        sessionStartTime = date
+        elapsedBeforePause = lead
+        lastResumeTime = nil
+        start()
+    }
+
+    /// Split the timeline at `date`: whatever was running is saved up to
+    /// then, and focus on `label` runs from then. A focus segment under a
+    /// minute is relabeled rather than saved.
+    func switchTo(_ label: String, at requested: Date = Date()) {
+        var date = min(requested, Date())
+        if let start = sessionStartTime { date = max(date, start) }
+        if currentPhase == .work, isActive {
+            if label == currentLabel {
+                if !isRunning { start() }
+                return
+            }
+            if elapsed(until: date) < 60 {
+                currentLabel = label
+                if isRunning { saveCheckpoint(); pushSharedState() } else { start() }
+                return
+            }
+        }
+        cancelPauseGrace()
+        closeSegment(at: date)
+        beginSession(phase: .work, label: label, kinds: [], plannedSeconds: workDuration, at: date)
+    }
+
+    func stop(at date: Date) {
+        cancelPauseGrace()
+        closeSegment(at: max(min(date, Date()), sessionStartTime ?? date))
+        timer?.cancel(); timer = nil
+        isRunning = false
+        currentLabel = ""
+        currentBreakKinds = []
+        elapsedBeforePause = 0
+        lastResumeTime = nil
+        sessionStartTime = nil
+        clearCheckpoint()
+        currentPhase = .work
+        setTimeForCurrentPhase()
+        unblockIfNeeded()
+        pushIdleEverywhere()
+    }
+
+    func apply(_ command: TimerCommand) {
+        switch command.action {
+        case .switchTo:
+            guard !command.label.isEmpty else { return }
+            switchTo(command.label, at: command.createdAt)
+        case .stop:
+            stop(at: command.createdAt)
+        case .startBreak:
+            startManualBreak(minutes: command.minutes > 0 ? command.minutes : breakDuration / 60,
+                             at: command.createdAt)
+        }
+    }
+
     enum QuickToggleResult { case started(String), stopped(minutes: Int, label: String) }
 
     /// One-key start/stop for when opening the popover is too much friction.
@@ -400,10 +515,9 @@ class TimerManager: ObservableObject {
             reset()
             return .stopped(minutes: minutes, label: label)
         }
-        if isOnBreak { skip() }
-        if currentLabel.isEmpty { currentLabel = tag }
-        start()
-        return .started(currentLabel)
+        let label = currentLabel.isEmpty ? tag : currentLabel
+        switchTo(label)
+        return .started(label)
     }
 
     func toggleRunPause() {
@@ -412,36 +526,7 @@ class TimerManager: ObservableObject {
     }
 
     func reset() {
-        cancelPauseGrace()
-        var elapsed = elapsedBeforePause
-        if let resumeTime = lastResumeTime { elapsed += Date().timeIntervalSince(resumeTime) }
-        timer?.cancel()
-        timer = nil
-        isRunning = false
-
-        if currentPhase == .work, elapsed >= 60, let start = sessionStartTime {
-            sessionStore?.addSession(WorkSession(
-                startTime: start, durationMinutes: elapsed / 60.0,
-                type: .work, label: currentLabel.isEmpty ? nil : currentLabel
-            ))
-        } else if isOnBreak, elapsed >= 60, let start = sessionStartTime {
-            sessionStore?.addSession(WorkSession(
-                startTime: start, durationMinutes: elapsed / 60.0,
-                type: .shortBreak, label: nil,
-                breakKinds: currentBreakKinds.isEmpty ? nil : currentBreakKinds
-            ))
-        }
-
-        currentLabel = ""
-        currentBreakKinds = []
-        elapsedBeforePause = 0
-        lastResumeTime = nil
-        sessionStartTime = nil
-        clearCheckpoint()
-        currentPhase = .work
-        setTimeForCurrentPhase()
-        unblockIfNeeded()
-        pushIdleEverywhere()
+        stop(at: Date())
     }
 
     func skip() {
@@ -476,32 +561,14 @@ class TimerManager: ObservableObject {
         pushIdleEverywhere()
     }
 
-    func startManualBreak(minutes: Double, kinds: [BreakKind] = []) {
+    func startManualBreak(minutes: Double, kinds: [BreakKind] = [], at requested: Date = Date()) {
+        var date = min(requested, Date())
+        if let start = sessionStartTime { date = max(date, start) }
         cancelPauseGrace()
-        var elapsed = elapsedBeforePause
-        if let resumeTime = lastResumeTime { elapsed += Date().timeIntervalSince(resumeTime) }
-        timer?.cancel()
-        timer = nil
-        isRunning = false
-
-        if elapsed >= 60, currentPhase == .work, let start = sessionStartTime {
-            sessionStore?.addSession(WorkSession(
-                startTime: start, durationMinutes: elapsed / 60.0,
-                type: .work, label: currentLabel.isEmpty ? nil : currentLabel
-            ))
-        }
-
-        currentLabel = ""
-        elapsedBeforePause = 0
-        lastResumeTime = nil
-        sessionStartTime = nil
+        if currentPhase == .work { closeSegment(at: date) }
         clearCheckpoint()
-        currentPhase = .shortBreak
-        currentBreakKinds = kinds
-        totalTime = minutes * 60
-        timeRemaining = totalTime
+        beginSession(phase: .shortBreak, label: "", kinds: kinds, plannedSeconds: minutes * 60, at: date)
         updateBlocking()
-        start()
     }
 
     func adjustDuration(by minutes: Double) {

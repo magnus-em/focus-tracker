@@ -50,7 +50,13 @@ struct TimerView: View {
                         HStack(spacing: 6) {
                             ForEach(settings.tags, id: \.self) { tag in
                                 let selected = timer.currentLabel == tag
-                                Button(tag) { timer.currentLabel = selected ? "" : tag }
+                                Button(tag) {
+                                    if timer.isActive && !timer.isOnBreak {
+                                        if !selected { timer.switchTo(tag) }
+                                    } else {
+                                        timer.currentLabel = selected ? "" : tag
+                                    }
+                                }
                                     .font(.system(size: 11, weight: .medium))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 5)

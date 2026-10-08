@@ -351,7 +351,11 @@ struct TimerScreen: View {
                 ForEach(settings.tags, id: \.self) { tag in
                     let selected = engine.currentLabel == tag
                     Button {
-                        engine.currentLabel = selected ? "" : tag
+                        if engine.isActive && !engine.isOnBreak {
+                            if !selected { engine.switchTo(tag) }
+                        } else {
+                            engine.currentLabel = selected ? "" : tag
+                        }
                     } label: {
                         Text(tag)
                             .font(.system(size: 13, weight: .semibold))
@@ -575,7 +579,11 @@ private struct LabelPickerSheet: View {
                 Section("Pick a Tag") {
                     ForEach(settings.tags, id: \.self) { t in
                         Button {
-                            engine.currentLabel = t
+                            if engine.isActive && !engine.isOnBreak {
+                                engine.switchTo(t)
+                            } else {
+                                engine.currentLabel = t
+                            }
                             dismiss()
                         } label: {
                             HStack {

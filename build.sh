@@ -55,6 +55,17 @@ cat > "$APP_DIR/Info.plist" <<'EOF'
     <string>AppIcon</string>
     <key>LSUIElement</key>
     <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.magnus.focus</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>focustracker</string>
+            </array>
+        </dict>
+    </array>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
 </dict>

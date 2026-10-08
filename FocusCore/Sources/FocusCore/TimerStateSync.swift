@@ -29,6 +29,10 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
 
     public var onRemoteChange: ((StoredTimerState) -> Void)?
 
+    /// New `TimerCommand`s from any device (including this one), oldest first.
+    /// Unset → commands are left unconsumed.
+    public var onCommands: (([TimerCommand]) -> Void)?
+
     /// Fired after a debounced post-import dedup pass so the host app can
     /// refresh any caches/views that show session totals.
     public var onPostImportSettled: (() -> Void)?
@@ -43,6 +47,7 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         self.deviceID = Self.persistedDeviceID()
         self.lastSeenVersion = UserDefaults.standard.integer(forKey: Self.lastSeenVersionKey)
         SyncLog.truncateIfLarge()
+        TimerCommand.markSeenIfFirstRun()
         SyncLog.event("syncInit", [
             "deviceID": String(deviceID.prefix(8)),
             "lastSeenVersionFromDefaults": lastSeenVersion,
@@ -72,6 +77,7 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         ) { [weak self] _ in
             SyncLog.event("ckRemoteChangeNotif")
             self?.checkForRemote()
+            self?.checkForCommands()
             self?.scheduleDedupAfterImport()
         }
 
@@ -88,7 +94,10 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         guard poller == nil else { return }
         poller = Timer.publish(every: 2.0, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.checkForRemote() }
+            .sink { [weak self] _ in
+                self?.checkForRemote()
+                self?.checkForCommands()
+            }
     }
 
     public func stop() {
@@ -101,6 +110,17 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
     /// landed between when the app foregrounded and now.
     public func pokeForRemote() {
         checkForRemote()
+        checkForCommands()
+    }
+
+    private func checkForCommands() {
+        guard let onCommands else { return }
+        let cmds = TimerCommand.takePending(container: container, stateUpdatedAt: currentState()?.updatedAt)
+        guard !cmds.isEmpty else { return }
+        for c in cmds {
+            SyncLog.event("cmdApply", ["action": c.action.rawValue, "label": c.label, "createdAt": c.createdAt])
+        }
+        onCommands(cmds)
     }
 
     /// Returns the *most authoritative* state in the local store. If CloudKit
@@ -235,7 +255,7 @@ public final class TimerStateSync: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
     }
 
-    private static func persistedDeviceID() -> String {
+    public static func persistedDeviceID() -> String {
         let key = "focusCore.timerSync.deviceID"
         if let v = UserDefaults.standard.string(forKey: key) { return v }
         let v = UUID().uuidString

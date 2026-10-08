@@ -173,6 +173,10 @@ struct SettingsView: View {
                         .cornerRadius(4)
                 }
 
+                Text("⌃⌥A switcher · ⌃⌥1–9 switch category · ⌃⌥B break · ⌃⌥0 stop")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+
                 HStack {
                     Text("Pause / resume hotkey")
                         .font(.system(size: 12, weight: .medium))

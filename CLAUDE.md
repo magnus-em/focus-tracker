@@ -37,7 +37,8 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 | `Sources/LockInApp.swift` | App entry (`@main FocusApp`). MenuBarExtra. `PopoverContent` wires all stores, hosts tab switcher + commitment overlay. |
 | `Sources/TimerManager.swift` | Timer state machine. `Phase { work, shortBreak, longBreak }` (no rawValue — `displayName` returns "Focus" / "Break"). Phase transitions, partial-session save, manual break, pause-grace auto-finalize, crash-recovery checkpoint, site-blocking orchestration. |
 | `Sources/SiteBlocker.swift` | `/etc/hosts` + `pf` firewall blocking. Requires sudo helper at `/usr/local/bin/focustimer-blocker`. Cleanup on quit + next launch after crash. |
-| `Sources/GlobalHotKey.swift` | ⌃⌥Space pause/resume; ⌃⌥S quick start/stop (`TimerManager.quickToggle`, tags with `settings.quickStartTag`, default HW; starts/reopens the day; `HotKeyToast` confirms). |
+| `Sources/GlobalHotKey.swift` | Carbon global hotkey wrapper. Bindings live in `QuickSwitch`. |
+| `Sources/QuickSwitch.swift` | Every no-popover way to change what's tracked. Hotkeys (⌃⌥): Space pause/resume, S start/stop (`settings.quickStartTag`, default HW), A switcher panel, 1–9 switch to category N, B break, 0 stop. URL scheme `focustracker://switch/<cat>`, `stop`, `break?minutes=N`, `toggle`, `switcher` (via `FocusAppDelegate`). Opens/reopens the day; `HotKeyToast` confirms. Toasts commands applied from other devices. |
 | `Sources/CompletionPanel.swift` | Simple 2.5s success toast (`show(label:)`) shown when a focus session completes. |
 | `Sources/Models.swift` | `WorkSession`, `WorkSession.SessionType` (with `isBreak`), `DailySummary`, `DayRecord`, `ProblemEntry` + enums, `ScratchItem`. |
 
@@ -87,6 +88,12 @@ Built for a quant + SWE interview prep workflow: focus sessions tagged by catego
 - **Crash recovery**: timer state checkpointed every 30s during work; on next launch the partial session is recovered into the store.
 - **In-session adjustment**: ±5 / ±10 min chips during active work.
 - **Quick presets**: 15 / 25 / 45 / 60m chips when idle on work.
+
+### Switching & remote commands
+- **Switch = split at a timestamp.** `TimerManager.switchTo(_:at:)` / `FocusTimerEngine.switchTo(_:at:)` save the running segment up to `at` (if ≥ 1 min; shorter focus is just relabeled) and start the new category already running from `at`. Category chips mid-session switch rather than relabel.
+- **Phone/iPad Shortcuts** (`FocusPad/FocusPad/FocusIntents.swift`: Switch Focus, Stop Focus Timer, Take a Break, plus Siri phrases) never touch `StoredTimerState`. They append a `StoredTimerCommand` (`FocusCore/TimerCommand.swift`); each device's `TimerStateSync` poll hands new commands to its engine, which applies them at the command's `createdAt`. A command is skipped if shared state was pushed after it (already acted on). Commands > 12h old are ignored; rows pruned after 7 days.
+- When a peer's state names a different session (startTime differs > 3s), the receiver saves its own segment first (`closeSegmentIfReplaced`); session dedup (±3s, same label) absorbs double saves.
+- `./install_ios.sh` builds FocusPad and installs on every connected iPhone/iPad.
 
 ### Day tracking
 - **Start Day** button at top of TimerView. Records `dayStart` and (if commitment enabled) shows the commitment overlay.
